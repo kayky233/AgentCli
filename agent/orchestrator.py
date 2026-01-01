@@ -12,6 +12,7 @@ from .agents.reposcout_plugin import RepoScoutPlugin
 from .agents.patch_author_plugin import PatchAuthorPlugin
 from .agents.build_plugin import BuildPlugin
 from .agents.test_plugin import TestPlugin
+from .llm.service import LLMService
 from .utils import colored
 
 
@@ -203,6 +204,7 @@ class Orchestrator:
             run_manager=self.run_manager,
             events=events,
             iteration=state.iteration,
+            services={"llm": LLMService.from_env()},
         )
         return ctx
 

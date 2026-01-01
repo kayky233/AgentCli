@@ -19,6 +19,7 @@ class RunContext:
     tool_router: Any
     run_manager: Any
     events: EventBus
+    services: Dict[str, Any] = field(default_factory=dict)
     env_decision: Optional[Dict[str, Any]] = None
     context_pack: Optional[Dict[str, Any]] = None
     patch_queue: List[str] = field(default_factory=list)
