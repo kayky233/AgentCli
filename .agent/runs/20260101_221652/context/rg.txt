@@ -1,6 +1,0 @@
-D:\AgentCli\.agent\runs\20260101_221644\plan.json:2:  "task": "run demo",
-D:\AgentCli\.agent\runs\20260101_221644\state.json:2:  "task": "run demo",
-D:\AgentCli\.agent\runs\20260101_221644\state.json:10:    "task": "run demo",
-D:\AgentCli\.agent\runs\20260101_221652\plan.json:2:  "task": "run demo",
-D:\AgentCli\.agent\runs\20260101_221652\state.json:2:  "task": "run demo",
-D:\AgentCli\.agent\runs\20260101_221652\state.json:10:    "task": "run demo",
