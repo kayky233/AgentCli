@@ -11,9 +11,9 @@ class BuildDiagnoser:
         self.run_manager = run_manager
         self.counter = 0
 
-    def run(self, state) -> Dict:
+    def run(self, state, build_cmd, cwd: Path) -> Dict:
         self.counter += 1
-        res = self.tool_router.run_command(["make", "-j"], cwd=Path.cwd())
+        res = self.tool_router.run_command(build_cmd, cwd=cwd)
         log_path = self.run_manager.save_verify_log(state, self.counter, "make", res["stdout"] + "\n" + res["stderr"])
         summary = self._parse_errors(res["stderr"])
         return {

@@ -12,11 +12,11 @@ class TestTriage:
         self.run_manager = run_manager
         self.counter = 0
 
-    def run(self, state) -> Dict:
+    def run(self, state, test_cmd, cwd: Path) -> Dict:
         self.counter += 1
-        res = self.tool_router.run_command(["make", "test"], cwd=Path.cwd())
+        res = self.tool_router.run_command(test_cmd, cwd=cwd)
         log_path = self.run_manager.save_verify_log(state, self.counter, "test", res["stdout"] + "\n" + res["stderr"])
-        summary = self._parse_xml() or self._parse_stdout(res["stdout"])
+        summary = self._parse_xml(cwd) or self._parse_stdout(res["stdout"])
         return {
             "success": res["exit_code"] == 0,
             "log": str(log_path),
@@ -24,8 +24,8 @@ class TestTriage:
             "summary": summary,
         }
 
-    def _parse_xml(self) -> List[Dict[str, str]]:
-        report = Path("build/tests/report.xml")
+    def _parse_xml(self, cwd: Path) -> List[Dict[str, str]]:
+        report = cwd / "build" / "tests" / "report.xml"
         if not report.exists():
             return []
         items: List[Dict[str, str]] = []

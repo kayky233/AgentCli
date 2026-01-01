@@ -10,15 +10,24 @@ from .utils import colored
 
 
 class Orchestrator:
-    def __init__(self, repo_root: Path, run_manager, tool_router, max_iters: int = 8):
+    def __init__(
+        self,
+        repo_root: Path,
+        run_manager,
+        tool_router,
+        max_iters: int = 8,
+        build_only: bool = False,
+    ):
         self.repo_root = repo_root
         self.run_manager = run_manager
         self.tool_router = tool_router
         self.max_iters = max_iters
+        self.build_only = build_only
         self.build = BuildDiagnoser(tool_router, run_manager)
         self.test = TestTriage(tool_router, run_manager)
         self.scout = RepoScout(tool_router, run_manager)
         self.author = PatchAuthor(tool_router, run_manager)
+        self.workdir = self._resolve_workdir()
 
     def plan_only(self, task: str, as_json: bool, auto: bool) -> Dict:
         state = self.run_manager.create_run(task, auto)
@@ -72,16 +81,26 @@ class Orchestrator:
 
             state.stage = "BUILD"
             self.run_manager.save_state(state)
-            build_res = self.build.run(state)
+            build_cmd, test_cmd, note = self._resolve_commands()
+            if note:
+                print(colored(note, "yellow"))
+            build_res = self.build.run(state, build_cmd, cwd=self.workdir)
             state.diagnostics["build"] = build_res
             if not build_res["success"]:
                 if not self._handle_failure(state, "build", build_res):
                     return
                 continue
 
+            if self.build_only:
+                print(colored("仅构建模式，跳过测试。", "blue"))
+                state.stage = "FINALIZE"
+                self.run_manager.save_state(state)
+                self.run_manager.save_transcript(state)
+                return
+
             state.stage = "TEST"
             self.run_manager.save_state(state)
-            test_res = self.test.run(state)
+            test_res = self.test.run(state, test_cmd, cwd=self.workdir)
             state.diagnostics["test"] = test_res
             if not test_res["success"]:
                 if not self._handle_failure(state, "test", test_res):
@@ -113,8 +132,8 @@ class Orchestrator:
                 "RepoScout：搜索相关文件与上下文",
                 "PatchAuthor：生成补丁（遵循 patch-first）",
                 "应用补丁：git apply --3way",
-                "BuildDiagnose：make -j 并解析错误",
-                "TestTriage：make test 并解析 gtest XML/stdout",
+                "BuildDiagnose：make -j（无 make 时将自动 fallback python 构建器）",
+                "TestTriage：make test（无 make 时将自动 fallback python 构建器）",
             ],
             "commands": ["make -j", "make test"],
             "risks": ["补丁可能失败，需回滚", "构建/测试失败需要多轮迭代"],
@@ -130,6 +149,11 @@ class Orchestrator:
         print("将运行命令：", ", ".join(plan.get("commands", [])))
         print("风险点：", "; ".join(plan.get("risks", [])))
         print(f"迭代上限：{plan.get('max_iterations')}")
+        make_info = self.tool_router.make_info or {}
+        if self.tool_router.make_cmd_override:
+            make_info = {"cmd": self.tool_router.make_cmd_override, "kind": "custom"}
+        detected = make_info.get("cmd", "未检测到")
+        print(f"构建工具：{detected}（工作目录：{self.workdir}）")
 
     def _prompt_plan(self, plan: Dict[str, Any], state) -> bool:
         if state.auto:
@@ -218,4 +242,28 @@ class Orchestrator:
             for e in errs:
                 hints.append(e.get("message", ""))
         return [h for h in hints if h]
+
+    def _resolve_commands(self):
+        # Decide make or fallback
+        make_found = self.tool_router.make_info or self.tool_router.make_cmd_override
+        build_cmd = ["make", "-j"]
+        test_cmd = ["make", "test"]
+        note = ""
+        if not make_found:
+            if self.tool_router.no_make_fallback:
+                note = "未检测到 make，且禁止 fallback，将直接使用 make（可能失败）。"
+            else:
+                build_cmd = ["python", "build.py", "build"]
+                test_cmd = ["python", "build.py", "test"]
+                note = "未检测到 make，已切换到 Python fallback 构建器。"
+        return build_cmd, test_cmd, note
+
+    def _resolve_workdir(self) -> Path:
+        # 优先当前仓库根的 Makefile，否则尝试 demo_c_project
+        if (self.repo_root / "Makefile").exists():
+            return self.repo_root
+        demo = self.repo_root / "demo_c_project"
+        if demo.exists():
+            return demo
+        return self.repo_root
 
