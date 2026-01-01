@@ -11,10 +11,11 @@ class BuildDiagnoser:
         self.run_manager = run_manager
         self.counter = 0
 
-    def run(self, state, build_cmd: Union[str, List[str]], cwd: Path) -> Dict:
+    def run(self, ctx_or_state, build_cmd: Union[str, List[str]], cwd: Path) -> Dict:
         self.counter += 1
         res = self.tool_router.run_command(build_cmd, cwd=cwd)
-        log_path = self.run_manager.save_verify_log(state, self.counter, "make", res["stdout"] + "\n" + res["stderr"])
+        rm = getattr(ctx_or_state, "run_manager", self.run_manager)
+        log_path = rm.save_verify_log(ctx_or_state, self.counter, "make", res["stdout"] + "\n" + res["stderr"])
         summary = self._parse_errors(res["stderr"])
         return {
             "success": res["exit_code"] == 0,

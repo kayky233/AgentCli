@@ -12,10 +12,11 @@ class TestTriage:
         self.run_manager = run_manager
         self.counter = 0
 
-    def run(self, state, test_cmd: Union[str, List[str]], cwd: Path) -> Dict:
+    def run(self, ctx_or_state, test_cmd: Union[str, List[str]], cwd: Path) -> Dict:
         self.counter += 1
         res = self.tool_router.run_command(test_cmd, cwd=cwd)
-        log_path = self.run_manager.save_verify_log(state, self.counter, "test", res["stdout"] + "\n" + res["stderr"])
+        rm = getattr(ctx_or_state, "run_manager", self.run_manager)
+        log_path = rm.save_verify_log(ctx_or_state, self.counter, "test", res["stdout"] + "\n" + res["stderr"])
         summary = self._parse_xml(cwd) or self._parse_stdout(res["stdout"])
         return {
             "success": res["exit_code"] == 0,
