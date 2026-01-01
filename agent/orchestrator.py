@@ -64,61 +64,77 @@ class Orchestrator:
         ctx = self._make_context(state, auto)
         pipeline = self._make_pipeline()
 
-        pipeline.run_stage(Stage.PREPARE, ctx)
-        if not ctx.env_decision or ctx.env_decision.get("strategy") == "error":
-            print(colored("环境决策失败，无法继续。", "red"))
-            self._flush_events(ctx)
-            return
-        self._print_env(ctx.env_decision)
-        if not auto:
-            choice = input("环境已选择，继续？(y/n): ").strip().lower()
-            if choice not in ("y", "yes", ""):
+        try:
+            pipeline.run_stage(Stage.PREPARE, ctx)
+            if not ctx.env_decision or ctx.env_decision.get("strategy") == "error":
+                print(colored("环境决策失败，无法继续。", "red"))
+                self._flush_events(ctx)
                 return
+            self._print_env(ctx.env_decision)
+            if not auto:
+                choice = input("环境已选择，继续？(y/n): ").strip().lower()
+                if choice not in ("y", "yes", ""):
+                    return
 
-        iteration = 0
-        while iteration < self.max_iters:
-            iteration += 1
-            ctx.iteration = iteration
-            pipeline.run_stage(Stage.GATHER, ctx, request=self._collect_hints(ctx))
-            pipeline.run_stage(Stage.EDIT, ctx)
-            if ctx.patch_queue:
-                if not auto:
-                    print(colored(f"Patch 摘要：{len(ctx.patch_queue)} 个，继续应用？(y/n)", "blue"))
-                    ans = input().strip().lower()
-                    if ans not in ("y", "yes", ""):
+            iteration = 0
+            while iteration < self.max_iters:
+                iteration += 1
+                ctx.iteration = iteration
+
+                pipeline.run_stage(Stage.GATHER, ctx, request=self._collect_hints(ctx))
+                print(colored("GATHER 完成", "blue"))
+
+                pipeline.run_stage(Stage.EDIT, ctx)
+                print(colored(f"EDIT 完成，补丁数：{len(ctx.patch_queue)}", "blue"))
+
+                ctx.events.emit("stage.enter", {"stage": Stage.APPLY.name})
+                if ctx.patch_queue:
+                    if not auto:
+                        print(colored(f"Patch 摘要：{len(ctx.patch_queue)} 个，继续应用？(y/n)", "blue"))
+                        ans = input().strip().lower()
+                        if ans not in ("y", "yes", ""):
+                            break
+                    apply_ok = self._apply_patches(ctx)
+                    ctx.events.emit("apply.result", {"status": "ok" if apply_ok else "fail", "patches": ctx.patch_queue})
+                    if not apply_ok:
+                        ctx.events.emit("stage.exit", {"stage": Stage.APPLY.name, "status": "fail"})
                         break
-                apply_ok = self._apply_patches(ctx)
-                ctx.events.emit("apply.result", {"status": "ok" if apply_ok else "fail", "patches": ctx.patch_queue})
-                if not apply_ok:
-                    break
-            else:
-                ctx.events.emit("apply.result", {"status": "skip", "patches": []})
+                else:
+                    ctx.events.emit("apply.result", {"status": "skip", "patches": []})
+                ctx.events.emit("stage.exit", {"stage": Stage.APPLY.name, "status": "ok"})
 
-            build_results = pipeline.run_stage(Stage.VERIFY_BUILD, ctx)
-            build_ok = build_results and build_results[-1].status == "ok"
-            if not build_ok:
+                build_results = pipeline.run_stage(Stage.VERIFY_BUILD, ctx)
+                build_ok = build_results and build_results[-1].status == "ok"
+                print(colored(f"BUILD 结果：{'成功' if build_ok else '失败'}", "yellow" if build_ok else "red"))
+                if not build_ok:
+                    if auto:
+                        continue
+                    ans = input("构建失败，继续迭代？(y/n): ").strip().lower()
+                    if ans in ("y", "yes", ""):
+                        continue
+                    break
+                if ctx.options.get("build_only"):
+                    print(colored("仅构建模式，结束。", "blue"))
+                    break
+
+                test_results = pipeline.run_stage(Stage.VERIFY_TEST, ctx)
+                test_ok = test_results and test_results[-1].status == "ok"
+                print(colored(f"TEST 结果：{'成功' if test_ok else '失败'}", "yellow" if test_ok else "red"))
+                if test_ok:
+                    print(colored("全部通过！", "green"))
+                    break
                 if auto:
                     continue
-                ans = input("构建失败，继续迭代？(y/n): ").strip().lower()
-                if ans in ("y", "yes", ""):
-                    continue
-                break
-            if ctx.options.get("build_only"):
-                print(colored("仅构建模式，结束。", "blue"))
-                break
-
-            test_results = pipeline.run_stage(Stage.VERIFY_TEST, ctx)
-            test_ok = test_results and test_results[-1].status == "ok"
-            if test_ok:
-                print(colored("全部通过！", "green"))
-                break
-            if auto:
-                continue
-            ans = input("测试失败，继续迭代？(y/n): ").strip().lower()
-            if ans not in ("y", "yes", ""):
-                break
-
-        self._flush_events(ctx)
+                ans = input("测试失败，继续迭代？(y/n): ").strip().lower()
+                if ans not in ("y", "yes", ""):
+                    break
+        except Exception as exc:
+            if 'ctx' in locals():
+                ctx.events.emit("run.error", {"error": str(exc)}, level="error")
+                self._flush_events(ctx)
+            print(colored(f"运行异常：{exc}", "red"))
+        else:
+            self._flush_events(ctx)
 
     def rollback(self) -> None:
         state = self.run_manager.load_latest()
