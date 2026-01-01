@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Union
 
 from .utils import truncate
 
@@ -11,7 +11,7 @@ class BuildDiagnoser:
         self.run_manager = run_manager
         self.counter = 0
 
-    def run(self, state, build_cmd, cwd: Path) -> Dict:
+    def run(self, state, build_cmd: Union[str, List[str]], cwd: Path) -> Dict:
         self.counter += 1
         res = self.tool_router.run_command(build_cmd, cwd=cwd)
         log_path = self.run_manager.save_verify_log(state, self.counter, "make", res["stdout"] + "\n" + res["stderr"])

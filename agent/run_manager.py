@@ -4,13 +4,20 @@ from typing import Any, Dict, Optional
 from .state import RunState
 from .utils import ensure_dir, load_json, now_ts, write_json
 
+RUNTIME_ROOT = Path("runtime") / "agent"
+
+
 
 class RunManager:
     def __init__(self, root: Path):
         self.root = root
-        self.agent_dir = root / ".agent"
+        self.agent_dir = root / RUNTIME_ROOT
         self.runs_dir = self.agent_dir / "runs"
+
+        ensure_dir(self.agent_dir)
         ensure_dir(self.runs_dir)
+
+
 
     def create_run(self, task: str, auto: bool) -> RunState:
         ts = now_ts()

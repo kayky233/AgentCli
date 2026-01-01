@@ -13,6 +13,7 @@ class RunState:
     stage: str = "PLAN"
     iteration: int = 0
     plan: Dict[str, Any] = field(default_factory=dict)
+    env_decision: Dict[str, Any] = field(default_factory=dict)
     transcript: List[Dict[str, Any]] = field(default_factory=list)
     diagnostics: Dict[str, Any] = field(default_factory=dict)
     patches: List[str] = field(default_factory=list)
@@ -27,6 +28,7 @@ class RunState:
             "stage": self.stage,
             "iteration": self.iteration,
             "plan": self.plan,
+            "env_decision": self.env_decision,
             "transcript": self.transcript,
             "diagnostics": self.diagnostics,
             "patches": self.patches,
@@ -43,6 +45,7 @@ class RunState:
             stage=data.get("stage", "PLAN"),
             iteration=int(data.get("iteration", 0)),
             plan=data.get("plan", {}),
+            env_decision=data.get("env_decision", {}),
             transcript=data.get("transcript", []),
             diagnostics=data.get("diagnostics", {}),
             patches=data.get("patches", []),

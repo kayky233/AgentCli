@@ -1,100 +1,28 @@
-import os
-import platform
 import shlex
-import shutil
 import subprocess
 import tempfile
+import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Union
 
 from .utils import ensure_dir, truncate
 
 
 class ToolRouter:
-    def __init__(
-        self,
-        repo_root: Path,
-        run_manager=None,
-        state=None,
-        make_cmd: Optional[str] = None,
-        no_make_fallback: bool = False,
-        use_wsl: bool = False,
-    ):
+    def __init__(self, repo_root: Path, run_manager=None, state=None):
         self.repo_root = repo_root
         self.run_manager = run_manager
         self.state = state
-        self.no_make_fallback = no_make_fallback
-        self.make_cmd_override = make_cmd
-        self.use_wsl = use_wsl
-        self.make_info = (
-            {"cmd": make_cmd, "kind": "custom"} if make_cmd else self.detect_make()
-        )
-        self.wsl_available = self.detect_wsl() if use_wsl else None
 
-    # ------------------ detection ------------------ #
-    def detect_make(self) -> Optional[Dict[str, str]]:
-        candidates: List[Tuple[str, str]] = [
-            ("make", "gnu"),
-            ("mingw32-make", "gnu"),
-            ("gmake", "gnu"),
-            ("nmake", "nmake"),
-        ]
-        system = platform.system().lower()
-        if system == "windows":
-            candidates = [
-                ("mingw32-make", "gnu"),
-                ("make", "gnu"),
-                ("gmake", "gnu"),
-                ("nmake", "nmake"),
-            ]
-        for name, kind in candidates:
-            if shutil.which(name):
-                return {"cmd": name, "kind": kind}
-        return None
-
-    def detect_wsl(self) -> Optional[str]:
-        wsl = shutil.which("wsl")
-        return wsl
-
-    # ------------------ execution helpers ------------------ #
-    def _alias_make(self, cmd: List[str]) -> List[str]:
-        if not cmd:
+    def _normalize_cmd(self, cmd: Union[List[str], str]) -> List[str]:
+        if isinstance(cmd, list):
             return cmd
-        if cmd[0] != "make":
-            return cmd
-        chosen = None
-        if self.make_cmd_override:
-            chosen = self.make_cmd_override
-        elif self.make_info:
-            chosen = self.make_info.get("cmd")
-        if chosen:
-            return [chosen] + cmd[1:]
-        return cmd
+        return shlex.split(cmd)
 
-    def _wrap_wsl(self, cmd: List[str], workdir: Path) -> List[str]:
-        # convert cwd to wsl path if possible
-        wsl_cwd = str(workdir)
-        if self.wsl_available:
-            try:
-                proc = subprocess.run(
-                    ["wsl", "wslpath", "-a", str(workdir)],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=5,
-                )
-                if proc.returncode == 0 and proc.stdout.strip():
-                    wsl_cwd = proc.stdout.strip()
-            except Exception:
-                pass
-        quoted_cmd = " ".join(shlex.quote(c) for c in cmd)
-        return ["wsl", "-e", "bash", "-lc", f"cd {shlex.quote(wsl_cwd)} && {quoted_cmd}"]
-
-    def run_command(self, cmd: List[str], cwd: Optional[Path] = None, timeout: Optional[int] = None) -> Dict:
+    def run_command(self, cmd: Union[List[str], str], cwd: Optional[Path] = None, timeout: Optional[int] = None) -> Dict:
         workdir = cwd or self.repo_root
         ensure_dir(workdir)
-        resolved_cmd = self._alias_make(cmd)
-        final_cmd = self._wrap_wsl(resolved_cmd, workdir) if self.use_wsl else resolved_cmd
+        final_cmd = self._normalize_cmd(cmd)
         try:
             proc = subprocess.run(
                 final_cmd,
@@ -102,6 +30,8 @@ class ToolRouter:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="ignore",
                 timeout=timeout,
             )
             result = {
@@ -131,7 +61,17 @@ class ToolRouter:
         # fallback simple grep
         matches = []
         for path in workdir.rglob("*"):
-            if path.is_file() and path.suffix not in {".o", ".a", ".so", ".dll", ".exe"}:
+            if ".agent" in path.parts or "build" in path.parts or ".git" in path.parts:
+                continue
+            if not path.is_file():
+                continue
+            if path.suffix in {".o", ".a", ".so", ".dll", ".exe"}:
+                continue
+            try:
+                if path.stat().st_size > 1_000_000:
+                    continue
+            except OSError:
+                continue
                 try:
                     for idx, line in enumerate(path.read_text(errors="ignore").splitlines(), start=1):
                         if pattern in line:

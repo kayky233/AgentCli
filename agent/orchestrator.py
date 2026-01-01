@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .build import BuildDiagnoser
+from .env_agent import EnvAgent, EnvDecision, EnvRequest
 from .patch_author import PatchAuthor
 from .reposcout import RepoScout
 from .tester import TestTriage
@@ -17,17 +18,21 @@ class Orchestrator:
         tool_router,
         max_iters: int = 8,
         build_only: bool = False,
+        env_overrides: Optional[Dict[str, Any]] = None,
     ):
         self.repo_root = repo_root
         self.run_manager = run_manager
         self.tool_router = tool_router
         self.max_iters = max_iters
         self.build_only = build_only
+        self.env_overrides = env_overrides or {}
         self.build = BuildDiagnoser(tool_router, run_manager)
         self.test = TestTriage(tool_router, run_manager)
         self.scout = RepoScout(tool_router, run_manager)
         self.author = PatchAuthor(tool_router, run_manager)
         self.workdir = self._resolve_workdir()
+        self.env_agent = EnvAgent()
+        self.env_decision: Optional[EnvDecision] = None
 
     def plan_only(self, task: str, as_json: bool, auto: bool) -> Dict:
         state = self.run_manager.create_run(task, auto)
@@ -58,8 +63,23 @@ class Orchestrator:
             self.run_manager.save_plan(state, plan)
             if not self._prompt_plan(plan, state):
                 return
+            if not self._env_decision_phase(state, auto):
+                return
 
         iteration = state.iteration
+        if not self.env_decision and state.env_decision:
+            self.env_decision = EnvDecision(
+                platform=state.env_decision.get("platform", ""),
+                strategy=state.env_decision.get("strategy", ""),
+                commands=state.env_decision.get("commands", {}),
+                detections=state.env_decision.get("detections", {}),
+                fallback=state.env_decision.get("fallback", {}),
+                user_actions=state.env_decision.get("user_actions", []),
+                warnings=state.env_decision.get("warnings", []),
+            )
+        if not self.env_decision:
+            if not self._env_decision_phase(state, auto):
+                return
         while iteration < self.max_iters:
             iteration += 1
             state.iteration = iteration
@@ -81,9 +101,8 @@ class Orchestrator:
 
             state.stage = "BUILD"
             self.run_manager.save_state(state)
-            build_cmd, test_cmd, note = self._resolve_commands()
-            if note:
-                print(colored(note, "yellow"))
+            build_cmd = self.env_decision.commands["build"]
+            test_cmd = self.env_decision.commands["test"]
             build_res = self.build.run(state, build_cmd, cwd=self.workdir)
             state.diagnostics["build"] = build_res
             if not build_res["success"]:
@@ -149,11 +168,7 @@ class Orchestrator:
         print("将运行命令：", ", ".join(plan.get("commands", [])))
         print("风险点：", "; ".join(plan.get("risks", [])))
         print(f"迭代上限：{plan.get('max_iterations')}")
-        make_info = self.tool_router.make_info or {}
-        if self.tool_router.make_cmd_override:
-            make_info = {"cmd": self.tool_router.make_cmd_override, "kind": "custom"}
-        detected = make_info.get("cmd", "未检测到")
-        print(f"构建工具：{detected}（工作目录：{self.workdir}）")
+        print(f"工作目录：{self.workdir}")
 
     def _prompt_plan(self, plan: Dict[str, Any], state) -> bool:
         if state.auto:
@@ -244,19 +259,8 @@ class Orchestrator:
         return [h for h in hints if h]
 
     def _resolve_commands(self):
-        # Decide make or fallback
-        make_found = self.tool_router.make_info or self.tool_router.make_cmd_override
-        build_cmd = ["make", "-j"]
-        test_cmd = ["make", "test"]
-        note = ""
-        if not make_found:
-            if self.tool_router.no_make_fallback:
-                note = "未检测到 make，且禁止 fallback，将直接使用 make（可能失败）。"
-            else:
-                build_cmd = ["python", "build.py", "build"]
-                test_cmd = ["python", "build.py", "test"]
-                note = "未检测到 make，已切换到 Python fallback 构建器。"
-        return build_cmd, test_cmd, note
+        # deprecated
+        return ["make", "-j"], ["make", "test"], ""
 
     def _resolve_workdir(self) -> Path:
         # 优先当前仓库根的 Makefile，否则尝试 demo_c_project
@@ -266,4 +270,68 @@ class Orchestrator:
         if demo.exists():
             return demo
         return self.repo_root
+
+    def _env_decision_phase(self, state, auto: bool) -> bool:
+        req = EnvRequest(
+            workspace=self.workdir,
+            preferred_build="make -j",
+            preferred_test="make test",
+            interactive=not auto,
+            allow_wsl=True,
+            allow_fallback=not self.env_overrides.get("no_make_fallback", False),
+            prefer_gnu_make=True,
+            override_make_cmd=self.env_overrides.get("make_cmd"),
+            override_use_wsl=self.env_overrides.get("use_wsl", False),
+        )
+        decision = self.env_agent.decide(req)
+        self.env_decision = decision
+        state.env_decision = decision.__dict__
+        self.run_manager.save_state(state)
+        self._print_env_decision(decision)
+        if decision.strategy == "error":
+            print(colored("环境决策失败，无法继续。", "red"))
+            return False
+        if auto:
+            return True
+        while True:
+            choice = input("环境策略：c=继续 / w=改用WSL / f=改用fallback / q=退出: ").strip().lower()
+            if choice == "c":
+                return True
+            if choice == "q":
+                return False
+            if choice == "w":
+                req.force_strategy = "wsl"
+                decision = self.env_agent.decide(req)
+                self.env_decision = decision
+                state.env_decision = decision.__dict__
+                self.run_manager.save_state(state)
+                self._print_env_decision(decision)
+                if decision.strategy != "error":
+                    return True
+                print(colored("切换 WSL 失败。", "red"))
+            if choice == "f":
+                req.force_strategy = "fallback"
+                decision = self.env_agent.decide(req)
+                self.env_decision = decision
+                state.env_decision = decision.__dict__
+                self.run_manager.save_state(state)
+                self._print_env_decision(decision)
+                if decision.strategy != "error":
+                    return True
+                print(colored("切换 fallback 失败。", "red"))
+
+    def _print_env_decision(self, decision: EnvDecision) -> None:
+        print(colored("环境决策", "blue"))
+        print(f"平台：{decision.platform}，策略：{decision.strategy}")
+        print(f"构建命令：{decision.commands.get('build')}")
+        print(f"测试命令：{decision.commands.get('test')}")
+        if decision.warnings:
+            for w in decision.warnings:
+                print(colored(f"提示：{w}", "yellow"))
+        det = decision.detections or {}
+        detected_make = det.get("make") or det.get("mingw32-make") or det.get("gmake")
+        print(f"检测：python={det.get('python')} make={detected_make} wsl={det.get('wsl')}")
+        if decision.user_actions:
+            for act in decision.user_actions:
+                print(f"- 建议：{act.get('title')} ({act.get('detail')})")
 

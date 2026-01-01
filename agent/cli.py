@@ -45,17 +45,18 @@ def main(argv=None):
 
     repo_root = Path.cwd()
     run_manager = RunManager(repo_root)
-    tool_router = ToolRouter(
-        repo_root,
-        make_cmd=getattr(args, "make_cmd", None),
-        no_make_fallback=getattr(args, "no_make_fallback", False),
-        use_wsl=getattr(args, "use_wsl", False),
-    )
+    tool_router = ToolRouter(repo_root)
+    env_overrides = {
+        "make_cmd": getattr(args, "make_cmd", None),
+        "no_make_fallback": getattr(args, "no_make_fallback", False),
+        "use_wsl": getattr(args, "use_wsl", False),
+    }
     orchestrator = Orchestrator(
         repo_root,
         run_manager,
         tool_router,
         build_only=getattr(args, "build_only", False),
+        env_overrides=env_overrides,
     )
 
     if args.command == "plan":

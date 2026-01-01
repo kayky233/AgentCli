@@ -18,6 +18,8 @@ def ensure_dir(path: Path) -> Path:
 
 
 def truncate(text: str, limit: int = MAX_LOG_CHARS) -> str:
+    if text is None:
+        return ""
     if len(text) <= limit:
         return text
     return text[: limit // 2] + "\n...[truncated]...\n" + text[-limit // 2 :]

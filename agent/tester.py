@@ -1,7 +1,7 @@
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Union
 
 from .utils import truncate
 
@@ -12,7 +12,7 @@ class TestTriage:
         self.run_manager = run_manager
         self.counter = 0
 
-    def run(self, state, test_cmd, cwd: Path) -> Dict:
+    def run(self, state, test_cmd: Union[str, List[str]], cwd: Path) -> Dict:
         self.counter += 1
         res = self.tool_router.run_command(test_cmd, cwd=cwd)
         log_path = self.run_manager.save_verify_log(state, self.counter, "test", res["stdout"] + "\n" + res["stderr"])
