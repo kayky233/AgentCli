@@ -174,6 +174,12 @@ class ToolRouter:
             tmp.flush()
             tmp_path = tmp.name
         res = self.run_command(["git", "apply", "--3way", "--whitespace=nowarn", tmp_path], cwd=workdir)
+        if res["exit_code"] != 0:
+            # fallback to direct apply without 3-way (useful before first commit / CRLF)
+            res = self.run_command(
+                ["git", "apply", "--ignore-space-change", "--ignore-whitespace", "--whitespace=nowarn", tmp_path],
+                cwd=workdir,
+            )
         Path(tmp_path).unlink(missing_ok=True)
         return res
 

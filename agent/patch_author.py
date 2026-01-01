@@ -1,3 +1,4 @@
+import difflib
 from pathlib import Path
 from typing import Dict, List
 
@@ -30,20 +31,19 @@ class PatchAuthor:
         path = Path("demo_c_project/src/calculator.c")
         if not path.exists():
             return ""
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        if "return a + b;" not in text:
+        text_raw = path.read_text(encoding="utf-8", errors="ignore")
+        text = text_raw.replace("\r\n", "\n")
+        target_block = "int subtract(int a, int b) {\n    return a + b;\n}\n"
+        if target_block not in text:
             return ""
-        patch = """diff --git a/demo_c_project/src/calculator.c b/demo_c_project/src/calculator.c
---- a/demo_c_project/src/calculator.c
-+++ b/demo_c_project/src/calculator.c
-@@
--int subtract(int a, int b) {
--    // Buggy implementation on purpose for the demo; should be a - b.
--    return a + b;
--}
-+int subtract(int a, int b) {
-+    return a - b;
-+}
-"""
-        return patch
+        new_text = text.replace(target_block, "int subtract(int a, int b) {\n    return a - b;\n}\n", 1)
+        orig_lines = text.splitlines(keepends=True)
+        new_lines = new_text.splitlines(keepends=True)
+        diff = difflib.unified_diff(
+            orig_lines,
+            new_lines,
+            fromfile="a/demo_c_project/src/calculator.c",
+            tofile="b/demo_c_project/src/calculator.c",
+        )
+        return "".join(diff)
 

@@ -1,0 +1,11 @@
+diff --git a/demo_c_project/src/calculator.c b/demo_c_project/src/calculator.c
+--- a/demo_c_project/src/calculator.c
++++ b/demo_c_project/src/calculator.c
+@@
+-int subtract(int a, int b) {
+-    // Buggy implementation on purpose for the demo; should be a - b.
+-    return a + b;
+-}
++int subtract(int a, int b) {
++    return a - b;
++}

@@ -1,0 +1,31 @@
+{
+  "task": "run demo",
+  "run_ts": "20260101_222326",
+  "run_dir": "D:\\AgentCli\\.agent\\runs\\20260101_222326",
+  "auto": true,
+  "checkpoint": "stash@{0}",
+  "stage": "PATCH",
+  "iteration": 1,
+  "plan": {
+    "task": "run demo",
+    "steps": [
+      "RepoScout：搜索相关文件与上下文",
+      "PatchAuthor：生成补丁（遵循 patch-first）",
+      "应用补丁：git apply --3way",
+      "BuildDiagnose：make -j（无 make 时将自动 fallback python 构建器）",
+      "TestTriage：make test（无 make 时将自动 fallback python 构建器）"
+    ],
+    "commands": [
+      "make -j",
+      "make test"
+    ],
+    "risks": [
+      "补丁可能失败，需回滚",
+      "构建/测试失败需要多轮迭代"
+    ],
+    "max_iterations": 8
+  },
+  "transcript": [],
+  "diagnostics": {},
+  "patches": []
+}

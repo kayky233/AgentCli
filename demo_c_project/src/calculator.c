@@ -5,8 +5,7 @@ int add(int a, int b) {
 }
 
 int subtract(int a, int b) {
-    // Buggy implementation on purpose for the demo; should be a - b.
-    return a + b;
+    return a - b;
 }
 
 int multiply(int a, int b) {

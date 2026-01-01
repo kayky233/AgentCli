@@ -1,0 +1,17 @@
+{
+  "events": [
+    {
+      "stage": "patch_apply_failed",
+      "payload": {
+        "patches": {
+          "patches": [
+            "diff --git a/demo_c_project/src/calculator.c b/demo_c_project/src/calculator.c\n--- a/demo_c_project/src/calculator.c\n+++ b/demo_c_project/src/calculator.c\n@@\n-int subtract(int a, int b) {\n-    // Buggy implementation on purpose for the demo; should be a - b.\n-    return a + b;\n-}\n+int subtract(int a, int b) {\n+    return a - b;\n+}\n"
+          ],
+          "notes": [
+            "Auto-fix subtract bug in demo calculator."
+          ]
+        }
+      }
+    }
+  ]
+}
