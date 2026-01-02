@@ -232,6 +232,9 @@ class Orchestrator:
             patch_text = Path(patch_path).read_text(encoding="utf-8")
             try:
                 payload = json.loads(patch_text)
+                # backward compat: patch file may contain a JSON-encoded string of JSON
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
                 req = parse_request(payload)
             except Exception as e:
                 print(colored(f"应用补丁失败：非法 JSON 或 schema 错误: {e}", "red"))

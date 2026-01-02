@@ -71,7 +71,7 @@ class PatchAuthorPlugin:
         # 只重试一次（总共最多 2 次），避免无限循环
         max_retries = 1
         attempt = 0
-        final_edits = None
+        final_payload = None
         last_error = None
 
         while attempt <= max_retries:
@@ -227,7 +227,7 @@ class PatchAuthorPlugin:
             dry = executor.apply(req, dry_run=True)
             if dry.ok:
                 ctx.events.emit("patch.verify.success", {"edit_count": len(req.edits)})
-                final_edits = json.dumps(payload, ensure_ascii=False, indent=2)
+                final_payload = payload
                 break
             else:
                 err_msg = dry.error or "验证失败"
@@ -250,12 +250,18 @@ class PatchAuthorPlugin:
                     ctx.events.emit("patch.apply.final_fail", {"error": err_msg})
                     return AgentResult(status="skip", outputs={"notes": [f"编辑指令无法应用: {err_msg}"]})
 
-        # Save edits to JSON file
-        edit_path = ctx.run_manager.save_patch(ctx, 1, json.dumps(final_edits, indent=2, ensure_ascii=False))
+        if final_payload is None:
+            ctx.events.emit("patch.apply.final_fail", {"error": last_error or "no_valid_payload"})
+            return AgentResult(status="skip", outputs={"notes": [last_error or "no_valid_payload"]})
+
+        # Save payload to file (raw JSON object text, NOT double-dumped)
+        edit_text = json.dumps(final_payload, ensure_ascii=False, indent=2)
+        edit_path = ctx.run_manager.save_patch(ctx, 1, edit_text)
         ctx.patch_queue.append(str(edit_path))
         
-        ctx.events.emit("patch.proposed", {"count": len(final_edits), "artifacts": [str(edit_path)]})
-        return AgentResult(status="ok", artifacts=[str(edit_path)], outputs={"edits": final_edits})
+        count = len(final_payload.get("edits", [])) if isinstance(final_payload, dict) else 0
+        ctx.events.emit("patch.proposed", {"count": count, "artifacts": [str(edit_path)]})
+        return AgentResult(status="ok", artifacts=[str(edit_path)], outputs={"payload": final_payload})
 
     def _build_prompt(self, ctx, allowed_files: list[str]) -> list[ChatMessage]:
         # 1) 严格的 System Prompt，禁止 markdown 代码块，强调精确匹配与锚点
