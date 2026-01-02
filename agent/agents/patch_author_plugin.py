@@ -68,7 +68,8 @@ class PatchAuthorPlugin:
             },
         )
 
-        max_retries = 3
+        # 只重试一次（总共最多 2 次），避免无限循环
+        max_retries = 1
         attempt = 0
         final_edits = None
         last_error = None
@@ -124,8 +125,8 @@ class PatchAuthorPlugin:
                 ctx.events.emit("patch_author.skip", {"reason": resp.get("error") or "llm_failed", "code_path": "resp_not_ok"})
                 return AgentResult(status="skip", outputs={"notes": [f"LLM 生成失败: {resp.get('error')}"]})
 
-            # Parse JSON edits from response
-            edits, parse_error = self._parse_edits(response_text)
+            # Parse JSON payload from response
+            payload, parse_error = self._parse_edits(response_text)
             if parse_error:
                 # Print debug info when parsing fails
                 print("\n" + "="*80)
@@ -158,12 +159,9 @@ class PatchAuthorPlugin:
                     ctx.events.emit("patch_author.skip", {"reason": "parse_fail_after_retry", "code_path": "parse_fail"})
                     return AgentResult(status="skip", outputs={"notes": [f"无法解析 LLM 输出: {parse_error}"]})
 
-            # Validate edits via protocol + executor dry-run
-            from ..editing.protocol import parse_request
-            from ..editing.executor import EditExecutor
-
+            # Normalize legacy shapes to protocol schema (best-effort)
             try:
-                req = parse_request(edits)
+                payload = self._normalize_protocol_payload(payload)
             except Exception as e:
                 err_msg = f"协议校验失败: {e}"
                 print("\n" + "="*80)
@@ -171,7 +169,43 @@ class PatchAuthorPlugin:
                 print("="*80)
                 print(f"错误: {err_msg}")
                 print(f"\n📋 模型输出 (前 1500 字符):")
-                print(json.dumps(edits, ensure_ascii=False)[:1500])
+                print(json.dumps(payload, ensure_ascii=False)[:1500])
+                print("="*80 + "\n")
+                ctx.events.emit("patch.verify.fail", {"error": err_msg})
+                last_error = err_msg
+                if attempt < max_retries:
+                    prompt_msgs.append(
+                        ChatMessage(
+                            role="user",
+                            content=(
+                                f"{err_msg}。\n"
+                                "请输出 **单个 JSON 对象**（不是数组），并严格使用字段：action,file_path,edits,message。\n"
+                                "edits 内每个元素只允许 old_string,new_string,expected_replacements。\n"
+                                "不要在 edits 内再嵌套 file_path/search_block/replace_block。\n"
+                                "如果需要改多个文件，请本轮只修改一个文件（使用顶层 file_path 指向该文件）。"
+                            ),
+                        )
+                    )
+                    attempt += 1
+                    continue
+                else:
+                    ctx.events.emit("patch.apply.final_fail", {"error": err_msg})
+                    return AgentResult(status="skip", outputs={"notes": [err_msg]})
+
+            # Validate payload via protocol + executor dry-run
+            from ..editing.protocol import parse_request
+            from ..editing.executor import EditExecutor
+
+            try:
+                req = parse_request(payload)
+            except Exception as e:
+                err_msg = f"协议校验失败: {e}"
+                print("\n" + "="*80)
+                print("❌ 编辑指令验证失败")
+                print("="*80)
+                print(f"错误: {err_msg}")
+                print(f"\n📋 模型输出 (前 1500 字符):")
+                print(json.dumps(payload, ensure_ascii=False)[:1500])
                 print("="*80 + "\n")
                 ctx.events.emit("patch.verify.fail", {"error": err_msg})
                 last_error = err_msg
@@ -193,7 +227,7 @@ class PatchAuthorPlugin:
             dry = executor.apply(req, dry_run=True)
             if dry.ok:
                 ctx.events.emit("patch.verify.success", {"edit_count": len(req.edits)})
-                final_edits = json.dumps(edits, ensure_ascii=False, indent=2)
+                final_edits = json.dumps(payload, ensure_ascii=False, indent=2)
                 break
             else:
                 err_msg = dry.error or "验证失败"
@@ -202,7 +236,7 @@ class PatchAuthorPlugin:
                 print("="*80)
                 print(f"错误: {err_msg}")
                 print(f"\n📋 生成的编辑指令 JSON (前 1500 字符):")
-                print(json.dumps(edits, ensure_ascii=False)[:1500])
+                print(json.dumps(payload, ensure_ascii=False)[:1500])
                 print("="*80 + "\n")
                 ctx.events.emit("patch.verify.fail", {"error": err_msg})
                 last_error = err_msg
@@ -255,13 +289,14 @@ class PatchAuthorPlugin:
             sections.append(f"--- FILE: {f_path} ---\n{content}\n--- END OF {f_path} ---")
         file_context_str = "\n\n".join(sections)
 
-        # 3) User Message，给出任务与文件内容
+        # 3) User Message，给出任务与文件内容（单文件协议：一次只改一个 file_path）
         user = (
             f"Task: {ctx.task}\n\n"
-            "Based on the following file contents, generate the JSON array for Search & Replace.\n"
-            "Remember: no markdown fences, raw JSON only, and search_block must be exact copies from the files.\n\n"
+            "Output ONE JSON OBJECT that conforms to the schema. Do NOT output arrays at top-level.\n"
+            "Do NOT include file_path inside edits. edits items must use old_string/new_string/expected_replacements.\n"
+            "If you need to modify multiple files, in THIS response only modify ONE file.\n\n"
             f"{file_context_str}\n\n"
-            "Output the JSON array now:"
+            "Output the JSON object now:"
         )
 
         return [
@@ -309,6 +344,57 @@ class PatchAuthorPlugin:
             return payload, None
         except json.JSONDecodeError as e:
             return None, f"JSON 解析失败: {e}"
+
+    def _normalize_protocol_payload(self, payload):
+        """
+        Accept ONLY the editing protocol object. Best-effort convert legacy shapes:
+        - list of {file_path, search_block, replace_block} (same file) -> protocol object
+        - object with edits[] using search_block/replace_block -> protocol object
+        """
+        # Legacy: top-level list of search/replace ops
+        if isinstance(payload, list):
+            if not payload:
+                raise ValueError("edits 不能为空")
+            if not all(isinstance(e, dict) for e in payload):
+                raise ValueError("数组元素必须是对象")
+            file_paths = {e.get("file_path") for e in payload}
+            if None in file_paths or "" in file_paths:
+                raise ValueError("数组元素缺少 file_path")
+            if len(file_paths) != 1:
+                raise ValueError("multi_edit 仅允许同一文件；请只输出一个 file_path 的 edits")
+            fp = next(iter(file_paths))
+            # Convert keys
+            edits = []
+            for e in payload:
+                if "old_string" in e and "new_string" in e and "expected_replacements" in e:
+                    edits.append({"old_string": e["old_string"], "new_string": e["new_string"], "expected_replacements": e["expected_replacements"]})
+                elif "search_block" in e and "replace_block" in e:
+                    edits.append({"old_string": e["search_block"], "new_string": e["replace_block"], "expected_replacements": 1})
+                else:
+                    raise ValueError("数组元素必须包含 old_string/new_string/expected_replacements 或 search_block/replace_block")
+            return {"action": "multi_edit" if len(edits) > 1 else "edit", "file_path": fp, "edits": edits, "message": ""}
+
+        if not isinstance(payload, dict):
+            raise ValueError("Payload must be a JSON object")
+
+        # Legacy object but edits items have search_block/replace_block
+        if "action" not in payload and "file_path" not in payload and "edits" not in payload and "search_block" in payload:
+            raise ValueError("Payload schema 不正确（顶层必须包含 action/file_path/edits）")
+
+        if isinstance(payload.get("edits"), list):
+            norm_edits = []
+            for e in payload["edits"]:
+                if not isinstance(e, dict):
+                    raise ValueError("edits 元素必须是对象")
+                if "old_string" in e and "new_string" in e and "expected_replacements" in e:
+                    norm_edits.append({"old_string": e["old_string"], "new_string": e["new_string"], "expected_replacements": e["expected_replacements"]})
+                elif "search_block" in e and "replace_block" in e:
+                    norm_edits.append({"old_string": e["search_block"], "new_string": e["replace_block"], "expected_replacements": 1})
+                else:
+                    raise ValueError("edit 缺少 old_string/new_string/expected_replacements")
+            payload = dict(payload)
+            payload["edits"] = norm_edits
+        return payload
 
     def _validate_edits(self, ctx, edits: list[dict], allowed_files: list[str]) -> tuple[bool, str]:
         """Validate that all edits can be applied."""

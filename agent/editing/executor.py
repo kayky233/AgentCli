@@ -75,6 +75,7 @@ class EditExecutor:
                     return ApplyResult(ok=False, error=f"Expected {op.expected_replacements} replacement(s) but found {occ} occurrence(s). Set expected_replacements to the actual count or refine old_string.", applied_edits=[])
                 # simulate apply for next step
                 working = working.replace(op.old_string, op.new_string, op.expected_replacements)
+                applied.append(AppliedEdit(file_path=req.file_path, old_string=op.old_string, new_string=op.new_string, occurrences=occ))
             # all good, now commit to file_cache and write
             diff = self._make_diff(original, working, req.file_path)
             if not dry_run:
