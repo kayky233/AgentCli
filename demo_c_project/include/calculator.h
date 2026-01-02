@@ -7,6 +7,7 @@ extern "C" {
 int add(int a, int b);
 int subtract(int a, int b);
 int multiply(int a, int b);
+int calculator_mod(int a, int b, int* error);
 int divide(int a, int b, int* error);
 
 #ifdef __cplusplus

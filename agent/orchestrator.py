@@ -152,7 +152,7 @@ class Orchestrator:
                 "EnvAgent：决策构建/测试命令",
                 "RepoScout：搜索相关文件与上下文",
                 "PatchAuthor：生成补丁",
-                "应用补丁：git apply --3way",
+                "应用补丁：Search & Replace",
                 "BuildDiagnose：构建并解析错误",
                 "TestTriage：测试并解析失败",
             ],
@@ -220,8 +220,26 @@ class Orchestrator:
     def _apply_patches(self, ctx: RunContext) -> bool:
         if not ctx.patch_queue:
             return True
+        
+        import json
         for patch_path in ctx.patch_queue:
             patch_text = Path(patch_path).read_text(encoding="utf-8")
+            
+            # Try to parse as JSON (Search & Replace mode)
+            try:
+                edits = json.loads(patch_text)
+                if isinstance(edits, list) and all(isinstance(e, dict) and "search_block" in e for e in edits):
+                    # Apply Search & Replace edits
+                    success, error_msg = self._apply_search_replace(ctx, edits)
+                    if not success:
+                        print(colored(f"应用编辑失败: {error_msg}", "red"))
+                        return False
+                    print(colored(f"应用了 {len(edits)} 个编辑。", "green"))
+                    continue
+            except json.JSONDecodeError:
+                pass
+            
+            # Fallback: try git apply (legacy diff format)
             res = self.tool_router.git_apply_patch(patch_text, cwd=ctx.workspace)
             if res["exit_code"] != 0:
                 print(colored("应用补丁失败", "red"))
@@ -229,6 +247,43 @@ class Orchestrator:
                 return False
         print(colored("补丁应用成功。", "green"))
         return True
+
+    def _apply_search_replace(self, ctx: RunContext, edits: list[dict]) -> tuple[bool, str]:
+        """Apply Search & Replace edits to files."""
+        for i, edit in enumerate(edits):
+            file_path = edit.get("file_path", "")
+            search_block = edit.get("search_block", "")
+            replace_block = edit.get("replace_block", "")
+            
+            if not file_path or not search_block:
+                return False, f"编辑 {i+1} 缺少必要字段"
+            
+            full_path = Path(ctx.workspace) / file_path
+            if not full_path.exists():
+                return False, f"文件不存在: {file_path}"
+            
+            try:
+                content = full_path.read_text(encoding="utf-8")
+                
+                if search_block not in content:
+                    return False, f"在 {file_path} 中找不到 search_block（编辑 {i+1}）"
+                
+                if content.count(search_block) > 1:
+                    return False, f"在 {file_path} 中 search_block 出现多次（编辑 {i+1}）"
+                
+                new_content = content.replace(search_block, replace_block, 1)
+                full_path.write_text(new_content, encoding="utf-8")
+                
+                ctx.events.emit("apply.edit", {
+                    "file": file_path,
+                    "search_len": len(search_block),
+                    "replace_len": len(replace_block)
+                })
+                
+            except Exception as e:
+                return False, f"处理文件 {file_path} 时出错: {e}"
+        
+        return True, ""
 
     def _collect_hints(self, ctx: RunContext) -> List[str]:
         hints: List[str] = []

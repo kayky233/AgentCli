@@ -35,5 +35,17 @@ TEST(Calculator, DividesSafely) {
     EXPECT_EQ(err, 1);
 }
 
+TEST(Calculator, ModulosNumbers) {
+    int err = 0;
+    EXPECT_EQ(calculator_mod(2, 3, &err), 2);
+    EXPECT_EQ(err, 0);
+    EXPECT_EQ(calculator_mod(-2, 3, &err), -2);
+    EXPECT_EQ(err, 0);
+    EXPECT_EQ(calculator_mod(0, 5, &err), 0);
+    EXPECT_EQ(err, 0);
+    EXPECT_EQ(calculator_mod(1, 0, &err), 0);
+    EXPECT_EQ(err, 1);
+}
+
 GTEST_MAIN();
 
