@@ -279,9 +279,14 @@ class Orchestrator:
                 if search_block not in content:
                     return False, f"在 {file_path} 中找不到 search_block（编辑 {i+1}）"
                 
-                if content.count(search_block) > 1:
-                    return False, f"在 {file_path} 中 search_block 出现多次（编辑 {i+1}）"
-                
+                occurrences = content.count(search_block)
+                if occurrences > 1:
+                    # Apply only the first occurrence and warn
+                    ctx.events.emit("apply.edit.multi_match", {
+                        "file": str(full_path.relative_to(repo_root) if full_path.exists() else file_path),
+                        "occurrences": occurrences,
+                        "edit_index": i + 1,
+                    })
                 new_content = content.replace(search_block, replace_block, 1)
                 full_path.write_text(new_content, encoding="utf-8")
                 
