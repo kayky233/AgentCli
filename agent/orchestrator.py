@@ -258,8 +258,19 @@ class Orchestrator:
             if not file_path or not search_block:
                 return False, f"编辑 {i+1} 缺少必要字段"
             
-            full_path = Path(ctx.workspace) / file_path
-            if not full_path.exists():
+            # Resolve file path relative to workspace and repo_root, with prefix stripping fallback
+            candidates = []
+            ws = Path(ctx.workspace)
+            repo_root = getattr(ctx.tool_router, "repo_root", ws)
+            candidates.append(ws / file_path)
+            candidates.append(Path(repo_root) / file_path)
+            if file_path.startswith("demo_c_project/"):
+                trimmed = file_path.split("/", 1)[1]
+                candidates.append(ws / trimmed)
+                candidates.append(Path(repo_root) / trimmed)
+
+            full_path = next((p for p in candidates if p.exists()), None)
+            if full_path is None:
                 return False, f"文件不存在: {file_path}"
             
             try:
