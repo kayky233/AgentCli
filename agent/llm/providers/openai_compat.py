@@ -33,7 +33,11 @@ class OpenAICompatProvider(LLMProvider):
             payload["temperature"] = req.temperature
         payload.update(req.extra or {})
 
-        url = f"{self.base_url}/v1/chat/completions"
+        # Handle both base_url styles: /api and /api/v1
+        if self.base_url.endswith("/v1"):
+            url = f"{self.base_url}/chat/completions"
+        else:
+            url = f"{self.base_url}/v1/chat/completions"
         start = time.time()
         try:
             resp = requests.post(url, json=payload, headers=headers, timeout=req.timeout)

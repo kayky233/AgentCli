@@ -62,7 +62,7 @@ class LLMService:
             if not resp.ok:
                 last_error = resp.error or "unknown error"
                 continue
-            if self._is_valid_diff(resp.content):
+            if self._is_valid_response(resp.content):
                 return {
                     "ok": True,
                     "content": resp.content,
@@ -70,11 +70,12 @@ class LLMService:
                     "usage": resp.usage,
                     "attempt": attempt,
                 }
-            last_error = "invalid diff format"
+            last_error = "invalid response format"
         return {"ok": False, "error": last_error or "failed", "content": ""}
 
-    def _is_valid_diff(self, content: str) -> bool:
+    def _is_valid_response(self, content: str) -> bool:
         if not content:
             return False
-        return "diff --git" in content
+        # Accept both JSON (Search & Replace) and unified diff formats
+        return ("diff --git" in content) or ("[" in content and "{" in content)
 
