@@ -76,6 +76,13 @@ class LLMService:
     def _is_valid_response(self, content: str) -> bool:
         if not content:
             return False
-        # Accept both JSON (Search & Replace) and unified diff formats
-        return ("diff --git" in content) or ("[" in content and "{" in content)
+        # Accept JSON (search/replace) or unified diff
+        if "diff --git" in content:
+            return True
+        try:
+            import json
+            obj = json.loads(content)
+            return isinstance(obj, (list, dict))
+        except Exception:
+            return False
 

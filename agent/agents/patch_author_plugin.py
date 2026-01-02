@@ -136,7 +136,7 @@ class PatchAuthorPlugin:
                 if attempt < max_retries:
                     prompt_msgs.append(ChatMessage(
                         role="user",
-                        content=f"你的输出无法解析为 JSON，错误：{parse_error}。请严格按照 JSON 格式输出，不要添加任何解释或 markdown 标记。",
+                        content=f"你的输出无法解析为 JSON，错误：{parse_error}。请严格按照 JSON 格式输出，不要添加任何解释或 markdown 标记。必须包含至少一个编辑对象。",
                     ))
                     attempt += 1
                     last_error = parse_error
@@ -146,6 +146,27 @@ class PatchAuthorPlugin:
                     return AgentResult(status="skip", outputs={"notes": [f"无法解析 LLM 输出: {parse_error}"]})
 
             # Validate edits
+            if not edits:
+                err_msg = "LLM 输出为空数组，请生成至少一个编辑指令"
+                print("\n" + "="*80)
+                print("❌ 编辑指令验证失败")
+                print("="*80)
+                print(f"错误: {err_msg}")
+                print("="*80 + "\n")
+                
+                ctx.events.emit("patch.verify.fail", {"error": err_msg})
+                last_error = err_msg
+                if attempt < max_retries:
+                    prompt_msgs.append(ChatMessage(
+                        role="user",
+                        content=f"{err_msg}。请生成至少一个包含 file_path/search_block/replace_block 的对象。",
+                    ))
+                    attempt += 1
+                else:
+                    ctx.events.emit("patch.apply.final_fail", {"error": err_msg})
+                    return AgentResult(status="skip", outputs={"notes": [err_msg]})
+                continue
+
             ctx.events.emit("patch.verify.start", {"edit_count": len(edits)})
             is_valid, err_msg = self._validate_edits(ctx, edits, allowed_files)
             
