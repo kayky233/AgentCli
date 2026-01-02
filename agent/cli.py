@@ -102,6 +102,8 @@ def fetch_available_models():
         headers["Authorization"] = f"Bearer {api_key}"
 
     console = Console()
+    console.print(f"[cyan]Base: {base}[/cyan]")
+    console.print(f"[cyan]API Key 设置: {'是' if api_key else '否'}[/cyan]")
     if not api_key:
         console.print("[yellow]警告：未设置 AGENT_LLM_API_KEY，可能无法列出私有/付费模型[/yellow]")
 
@@ -141,7 +143,7 @@ def _classify_model(model_id: str) -> str:
 def render_models(models, filter_text: str = ""):
     console = Console()
     if not models:
-        console.print("[yellow]未获取到模型列表，请检查网络或 API Key[/yellow]")
+        console.print("[yellow]未获取到模型列表，请检查网络或 API Key；或尝试设置 AGENT_LLM_API_BASE/AGENT_LLM_BASE_URL[/yellow]")
         return
 
     filter_text = filter_text.lower()
