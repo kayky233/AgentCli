@@ -3,6 +3,28 @@
 #include <string>
 #include "calculator.h"
 #include "gtest.h"
+#include <vector>
+#include <algorithm>
+
+TEST(Calculator, HeavyLoadTest) {
+    int* heap = nullptr;
+    int size = 0;
+    int capacity = 0;
+    for (int i = 0; i < 1000; ++i) {
+        min_heap_insert(&heap, &size, &capacity, rand() % 10000);
+    }
+    std::vector<int> sorted_elements;
+    while (size > 0) {
+        sorted_elements.push_back(min_heap_delete_min(&heap, &size));
+    }
+    std::vector<int> copy = sorted_elements;
+    std::sort(copy.begin(), copy.end());
+    ASSERT_EQ(sorted_elements.size(), copy.size());
+    for (size_t i = 0; i < copy.size(); ++i) {
+        EXPECT_EQ(sorted_elements[i], copy[i]);
+    }
+    destroy_queue(&heap, &size, &capacity);
+}
 
 TEST(Calculator, AddsNumbers) {
     EXPECT_EQ(add(2, 3), 5);
