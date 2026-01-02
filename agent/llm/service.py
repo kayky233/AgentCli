@@ -70,7 +70,7 @@ class LLMService:
                     "usage": resp.usage,
                     "attempt": attempt,
                 }
-            last_error = "invalid response format"
+            last_error = f"invalid response format (content: {resp.content[:200]}...)"
         return {"ok": False, "error": last_error or "failed", "content": ""}
 
     def _is_valid_response(self, content: str) -> bool:

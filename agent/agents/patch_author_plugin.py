@@ -106,12 +106,32 @@ class PatchAuthorPlugin:
             )
 
             if not resp.get("ok"):
+                # Print debug info when LLM call fails
+                print("\n" + "="*80)
+                print("❌ LLM 调用失败")
+                print("="*80)
+                print(f"错误: {resp.get('error')}")
+                if attempt == 0:
+                    print(f"\n📝 Prompt (前 1000 字符):")
+                    prompt_preview = "\n".join(m.content for m in prompt_msgs)[:1000]
+                    print(prompt_preview)
+                print("="*80 + "\n")
+                
                 ctx.events.emit("patch_author.skip", {"reason": resp.get("error") or "llm_failed", "code_path": "resp_not_ok"})
                 return AgentResult(status="skip", outputs={"notes": [f"LLM 生成失败: {resp.get('error')}"]})
 
             # Parse JSON edits from response
             edits, parse_error = self._parse_edits(response_text)
             if parse_error:
+                # Print debug info when parsing fails
+                print("\n" + "="*80)
+                print("❌ JSON 解析失败")
+                print("="*80)
+                print(f"错误: {parse_error}")
+                print(f"\n📥 模型返回内容 (前 2000 字符):")
+                print(response_text[:2000])
+                print("="*80 + "\n")
+                
                 ctx.events.emit("patch.parse_fail", {"error": parse_error})
                 if attempt < max_retries:
                     prompt_msgs.append(ChatMessage(
@@ -134,6 +154,16 @@ class PatchAuthorPlugin:
                 final_edits = edits
                 break
             else:
+                # Print debug info when validation fails
+                print("\n" + "="*80)
+                print("❌ 编辑指令验证失败")
+                print("="*80)
+                print(f"错误: {err_msg}")
+                print(f"\n📋 生成的编辑指令 (共 {len(edits)} 个):")
+                import json
+                print(json.dumps(edits, indent=2, ensure_ascii=False)[:1500])
+                print("="*80 + "\n")
+                
                 ctx.events.emit("patch.verify.fail", {"error": err_msg})
                 last_error = err_msg
                 if attempt < max_retries:
