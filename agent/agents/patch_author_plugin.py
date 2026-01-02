@@ -181,7 +181,6 @@ class PatchAuthorPlugin:
                 print("="*80)
                 print(f"错误: {err_msg}")
                 print(f"\n📋 生成的编辑指令 (共 {len(edits)} 个):")
-                import json
                 print(json.dumps(edits, indent=2, ensure_ascii=False)[:1500])
                 print("="*80 + "\n")
                 
