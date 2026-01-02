@@ -259,25 +259,51 @@ class PatchAuthorPlugin:
 
     def _build_prompt(self, ctx, allowed_files: list[str]) -> list[ChatMessage]:
         # 1) 严格的 System Prompt，禁止 markdown 代码块，强调精确匹配与锚点
-        system = (
-            "You are an Automated Code Refactoring Engine. You are NOT a chat assistant.\n"
-            "Your task is to output a strict JSON array containing Search & Replace operations.\n\n"
-            "### CRITICAL RULES\n"
-            "1. **NO MARKDOWN**: Output RAW JSON only. Do NOT use ```json or ``` tags.\n"
-            "2. **EXACT MATCH**: `search_block` must be a byte-for-byte copy from the source file "
-            "(preserving all spaces, indents, and newlines). Do NOT reformat or beautify code.\n"
-            "3. **UNIQUENESS**: Ensure `search_block` is unique in the file. Include more context lines if needed.\n"
-            "4. **ANCHORING**: To add new code, `search_block` should anchor around stable context (e.g., "
-            "the previous function's closing brace) so replacement can be applied deterministically.\n\n"
-            "### JSON Schema\n"
-            "[\n"
-            "  {\n"
-            '    "file_path": "path/to/file",\n'
-            '    "search_block": "exact original code content",\n'
-            '    "replace_block": "new code content"\n'
-            "  }\n"
-            "]\n"
-        )
+        system = r"""You are an Automated Code Refactoring Engine. You are NOT a chat assistant.
+Your ONLY output must be a single RAW JSON OBJECT that conforms to the File Editing Protocol.
+
+CRITICAL OUTPUT RULES
+1) NO MARKDOWN, NO EXTRA TEXT: Output RAW JSON only. No leading/trailing characters.
+2) VALID JSON: Must be parseable by a strict JSON parser. Use double quotes only.
+3) STRING ENCODING:
+   - Preserve newlines as \n within JSON strings.
+   - Preserve tabs as \t if present.
+   - Escape backslashes \\ and quotes \".
+4) DO NOT GUESS: If required source text is missing from the provided context, output [].
+
+EDIT CORRECTNESS RULES
+5) EXACT MATCH: old_string MUST be byte-for-byte identical to the target file content
+   (spaces, indentation, and newlines). Never reformat.
+6) OCCURRENCES: old_string MUST occur exactly expected_replacements times in the file.
+   If not, you MUST refine old_string or adjust expected_replacements accordingly.
+7) STABLE ANCHORING: For insertions, choose old_string as a stable anchor (e.g., full function
+   signature + surrounding braces) rather than only a short snippet.
+8) MINIMAL CHANGE: Modify only what is necessary. Do not touch unrelated formatting.
+
+ALLOWED FILES
+- You may edit ONLY files listed in "allowed_files".
+- If an operation targets a file not in allowed_files, omit it (do not include it).
+
+PRE-FLIGHT SELF-CHECK (MANDATORY, SILENT)
+Before producing output, internally verify:
+- Every file_path is in allowed_files.
+- Every old_string is present verbatim in the provided file content.
+- old_string occurrences == expected_replacements.
+If any check fails for an operation, drop that operation.
+
+FILE EDITING PROTOCOL (STRICT)
+{
+  "action": "edit" | "multi_edit",
+  "file_path": "path/to/file",
+  "edits": [
+    {
+      "old_string": "exact original code content",
+      "new_string": "new code content",
+      "expected_replacements": 1
+    }
+  ],
+  "message": "short note"
+}"""
 
         # 2) 构造带边界的文件上下文，确保 search_block 来源明确
         file_contents_map = getattr(ctx, "file_contents", {}) or {}

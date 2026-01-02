@@ -13,3 +13,9 @@ __pycache__/
 
 # Logs
 *.log
+
+# Local env files (may contain secrets)
+env.ps1
+
+# Demo build artifacts
+demo_c_project/build/
