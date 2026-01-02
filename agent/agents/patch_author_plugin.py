@@ -136,7 +136,10 @@ class PatchAuthorPlugin:
                 if attempt < max_retries:
                     prompt_msgs.append(ChatMessage(
                         role="user",
-                        content=f"你的输出无法解析为 JSON，错误：{parse_error}。请严格按照 JSON 格式输出，不要添加任何解释或 markdown 标记。必须包含至少一个编辑对象。",
+                        content=(
+                            "你的输出无法解析为 JSON。请严格输出纯 JSON 数组，不要包含 ```json 或 ``` 之类的代码块标记，"
+                            "不要输出任何解释或额外文本。必须包含至少一个编辑对象。"
+                        ),
                     ))
                     attempt += 1
                     last_error = parse_error
@@ -260,19 +263,18 @@ class PatchAuthorPlugin:
 
     def _parse_edits(self, text: str) -> tuple[list[dict], str]:
         """Parse JSON edits from LLM response, handling markdown code blocks."""
-        text = text.strip()
-        
-        # Remove markdown code blocks if present
-        if text.startswith("```"):
-            lines = text.split("\n")
-            # Remove first line (```json or ```)
-            if lines[0].strip().startswith("```"):
-                lines = lines[1:]
-            # Remove last line if it's ```
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            text = "\n".join(lines).strip()
-        
+        raw = text or ""
+        text = raw.strip()
+
+        # Remove markdown code fences anywhere in the text
+        if "```" in text:
+            stripped = []
+            for line in text.split("\n"):
+                if line.strip().startswith("```"):
+                    continue
+                stripped.append(line)
+            text = "\n".join(stripped).strip()
+
         try:
             edits = json.loads(text)
             if not isinstance(edits, list):
