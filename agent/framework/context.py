@@ -26,6 +26,7 @@ class RunContext:
     last_build_result: Optional[Dict[str, Any]] = None
     last_test_result: Optional[Dict[str, Any]] = None
     iteration: int = 0
+    file_contents: Dict[str, str] = field(default_factory=dict)
 
     def save_json(self, name: str, obj: Dict[str, Any]):
         import json

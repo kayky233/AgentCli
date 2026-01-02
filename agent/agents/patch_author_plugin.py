@@ -111,6 +111,10 @@ class PatchAuthorPlugin:
                 print("❌ LLM 调用失败")
                 print("="*80)
                 print(f"错误: {resp.get('error')}")
+                content_dbg = resp.get("content") or ""
+                if content_dbg:
+                    print("\n📥 模型返回内容 (前 2000 字符):")
+                    print(content_dbg[:2000])
                 if attempt == 0:
                     print(f"\n📝 Prompt (前 1000 字符):")
                     prompt_preview = "\n".join(m.content for m in prompt_msgs)[:1000]
@@ -148,51 +152,55 @@ class PatchAuthorPlugin:
                     ctx.events.emit("patch_author.skip", {"reason": "parse_fail_after_retry", "code_path": "parse_fail"})
                     return AgentResult(status="skip", outputs={"notes": [f"无法解析 LLM 输出: {parse_error}"]})
 
-            # Validate edits
-            if not edits:
-                err_msg = "LLM 输出为空数组，请生成至少一个编辑指令"
+            # Validate edits via protocol + executor dry-run
+            from ..editing.protocol import parse_request
+            from ..editing.executor import EditExecutor
+
+            try:
+                req = parse_request(edits)
+            except Exception as e:
+                err_msg = f"协议校验失败: {e}"
                 print("\n" + "="*80)
                 print("❌ 编辑指令验证失败")
                 print("="*80)
                 print(f"错误: {err_msg}")
+                print(f"\n📋 模型输出 (前 1500 字符):")
+                print(json.dumps(edits, ensure_ascii=False)[:1500])
                 print("="*80 + "\n")
-                
                 ctx.events.emit("patch.verify.fail", {"error": err_msg})
                 last_error = err_msg
                 if attempt < max_retries:
                     prompt_msgs.append(ChatMessage(
                         role="user",
-                        content=f"{err_msg}。请生成至少一个包含 file_path/search_block/replace_block 的对象。",
+                        content=f"{err_msg}。请按编辑协议输出 JSON，并确保字段齐全。",
                     ))
                     attempt += 1
+                    continue
                 else:
                     ctx.events.emit("patch.apply.final_fail", {"error": err_msg})
                     return AgentResult(status="skip", outputs={"notes": [err_msg]})
-                continue
 
-            ctx.events.emit("patch.verify.start", {"edit_count": len(edits)})
-            is_valid, err_msg = self._validate_edits(ctx, edits, allowed_files)
-            
-            if is_valid:
-                ctx.events.emit("patch.verify.success", {"edit_count": len(edits)})
-                final_edits = edits
+            executor = EditExecutor(ctx.file_contents, Path(ctx.workspace))
+            dry = executor.apply(req, dry_run=True)
+            if dry.ok:
+                ctx.events.emit("patch.verify.success", {"edit_count": len(req.edits)})
+                final_edits = json.dumps(edits, ensure_ascii=False, indent=2)
                 break
             else:
-                # Print debug info when validation fails
+                err_msg = dry.error or "验证失败"
                 print("\n" + "="*80)
                 print("❌ 编辑指令验证失败")
                 print("="*80)
                 print(f"错误: {err_msg}")
-                print(f"\n📋 生成的编辑指令 (共 {len(edits)} 个):")
-                print(json.dumps(edits, indent=2, ensure_ascii=False)[:1500])
+                print(f"\n📋 生成的编辑指令 JSON (前 1500 字符):")
+                print(json.dumps(edits, ensure_ascii=False)[:1500])
                 print("="*80 + "\n")
-                
                 ctx.events.emit("patch.verify.fail", {"error": err_msg})
                 last_error = err_msg
                 if attempt < max_retries:
                     prompt_msgs.append(ChatMessage(
                         role="user",
-                        content=f"你的 Search & Replace 指令无法应用，错误：\n{err_msg}\n请检查 search_block 是否完全匹配文件内容（包括空格和换行），并重新生成。",
+                        content=f"验证失败：{err_msg}。仅修正 old_string 或 expected_replacements，再输出 JSON。",
                     ))
                     attempt += 1
                 else:
@@ -207,45 +215,50 @@ class PatchAuthorPlugin:
         return AgentResult(status="ok", artifacts=[str(edit_path)], outputs={"edits": final_edits})
 
     def _build_prompt(self, ctx, allowed_files: list[str]) -> list[ChatMessage]:
+        # 1) 严格的 System Prompt，禁止 markdown 代码块，强调精确匹配与锚点
         system = (
-            "你是一个严谨的代码修复助手。你的任务是生成 Search & Replace 指令来修改代码。\n"
-            "输出格式必须是纯 JSON 数组（不要使用 markdown 代码块），每个元素包含：\n"
-            "- file_path: 文件路径（必须在 ALLOWED_FILES 中）\n"
-            "- search_block: 要搜索的代码块（必须完全匹配文件内容，包括空格和换行）\n"
-            "- replace_block: 替换后的代码块\n"
-            "注意：search_block 必须在文件中唯一存在，否则无法应用。\n"
-            "示例输出：\n"
-            '[\n'
-            '  {\n'
-            '    "file_path": "demo_c_project/src/calculator.c",\n'
-            '    "search_block": "int add(int a, int b) {\\n    return a + b;\\n}",\n'
-            '    "replace_block": "int add(int a, int b) {\\n    return a + b;\\n}\\n\\nint mod(int a, int b) {\\n    return a % b;\\n}"\n'
-            '  }\n'
-            ']'
+            "You are an Automated Code Refactoring Engine. You are NOT a chat assistant.\n"
+            "Your task is to output a strict JSON array containing Search & Replace operations.\n\n"
+            "### CRITICAL RULES\n"
+            "1. **NO MARKDOWN**: Output RAW JSON only. Do NOT use ```json or ``` tags.\n"
+            "2. **EXACT MATCH**: `search_block` must be a byte-for-byte copy from the source file "
+            "(preserving all spaces, indents, and newlines). Do NOT reformat or beautify code.\n"
+            "3. **UNIQUENESS**: Ensure `search_block` is unique in the file. Include more context lines if needed.\n"
+            "4. **ANCHORING**: To add new code, `search_block` should anchor around stable context (e.g., "
+            "the previous function's closing brace) so replacement can be applied deterministically.\n\n"
+            "### JSON Schema\n"
+            "[\n"
+            "  {\n"
+            '    "file_path": "path/to/file",\n'
+            '    "search_block": "exact original code content",\n'
+            '    "replace_block": "new code content"\n'
+            "  }\n"
+            "]\n"
         )
-        
-        user_parts = [
-            f"任务: {ctx.task}",
-            "要求：",
-            "1. 输出纯 JSON 数组（不要使用 ```json 等 markdown 标记）",
-            "2. search_block 必须完全匹配文件内容",
-            "3. 保持最小改动",
-            "4. 只修改必要的文件",
-            f"ALLOWED_FILES: {allowed_files}",
-            "以下是目标文件的当前内容，请基于此内容生成 Search & Replace 指令："
-        ]
-        
-        for f in allowed_files:
-            content = self._read_file_content(ctx, f)
-            user_parts.append(f"\n=== File: {f} ===\n{content}\n")
 
-        if ctx.last_build_result and ctx.last_build_result.get('summary'):
-            user_parts.append(f"\n构建错误摘要: {ctx.last_build_result.get('summary')}")
-        if ctx.last_test_result and ctx.last_test_result.get('summary'):
-            user_parts.append(f"\n测试失败摘要: {ctx.last_test_result.get('summary')}")
-        
-        user = "\n".join(user_parts)
-        return [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
+        # 2) 构造带边界的文件上下文，确保 search_block 来源明确
+        file_contents_map = getattr(ctx, "file_contents", {}) or {}
+        sections = []
+        for f_path in allowed_files:
+            content = file_contents_map.get(f_path)
+            if content is None:
+                content = self._read_file_content(ctx, f_path)
+            sections.append(f"--- FILE: {f_path} ---\n{content}\n--- END OF {f_path} ---")
+        file_context_str = "\n\n".join(sections)
+
+        # 3) User Message，给出任务与文件内容
+        user = (
+            f"Task: {ctx.task}\n\n"
+            "Based on the following file contents, generate the JSON array for Search & Replace.\n"
+            "Remember: no markdown fences, raw JSON only, and search_block must be exact copies from the files.\n\n"
+            f"{file_context_str}\n\n"
+            "Output the JSON array now:"
+        )
+
+        return [
+            ChatMessage(role="system", content=system),
+            ChatMessage(role="user", content=user),
+        ]
 
     def _read_file_content(self, ctx, file_path: str) -> str:
         repo_root = Path(getattr(ctx.tool_router, "repo_root", "."))
@@ -256,13 +269,18 @@ class PatchAuthorPlugin:
             with open(full_path, "r", encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
                 if len(lines) <= 300:
-                    return "".join(lines)
-                return "".join(lines[:150]) + "\n... (omitted middle lines) ...\n" + "".join(lines[-150:])
+                    content = "".join(lines)
+                else:
+                    content = "".join(lines[:150]) + "\n... (omitted middle lines) ...\n" + "".join(lines[-150:])
+                # cache for later validation/execution
+                if hasattr(ctx, "file_contents"):
+                    ctx.file_contents[file_path] = content if len(lines) <= 300 else full_path.read_text(encoding="utf-8", errors="replace")
+                return content
         except Exception as e:
             return f"[Error reading file: {e}]"
 
-    def _parse_edits(self, text: str) -> tuple[list[dict], str]:
-        """Parse JSON edits from LLM response, handling markdown code blocks."""
+    def _parse_edits(self, text: str) -> tuple[dict, str]:
+        """Parse JSON payload from LLM response, handling markdown code blocks."""
         raw = text or ""
         text = raw.strip()
 
@@ -276,19 +294,10 @@ class PatchAuthorPlugin:
             text = "\n".join(stripped).strip()
 
         try:
-            edits = json.loads(text)
-            if not isinstance(edits, list):
-                return None, "输出必须是 JSON 数组"
-            for i, edit in enumerate(edits):
-                if not isinstance(edit, dict):
-                    return None, f"第 {i+1} 个元素不是 JSON 对象"
-                if "file_path" not in edit:
-                    return None, f"第 {i+1} 个元素缺少 file_path"
-                if "search_block" not in edit:
-                    return None, f"第 {i+1} 个元素缺少 search_block"
-                if "replace_block" not in edit:
-                    return None, f"第 {i+1} 个元素缺少 replace_block"
-            return edits, None
+            payload = json.loads(text)
+            if not isinstance(payload, (dict, list)):
+                return None, "输出必须是 JSON 对象或数组"
+            return payload, None
         except json.JSONDecodeError as e:
             return None, f"JSON 解析失败: {e}"
 

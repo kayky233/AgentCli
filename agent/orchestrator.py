@@ -205,6 +205,7 @@ class Orchestrator:
             events=events,
             iteration=state.iteration,
             services={"llm": LLMService.from_env()},
+            file_contents={},
         )
         return ctx
 
@@ -222,84 +223,29 @@ class Orchestrator:
             return True
         
         import json
+        from .editing.protocol import parse_request
+        from .editing.executor import EditExecutor
+
+        executor = EditExecutor(ctx.file_contents, Path(ctx.workspace))
+
         for patch_path in ctx.patch_queue:
             patch_text = Path(patch_path).read_text(encoding="utf-8")
-            
-            # Try to parse as JSON (Search & Replace mode)
             try:
-                edits = json.loads(patch_text)
-                if isinstance(edits, list) and all(isinstance(e, dict) and "search_block" in e for e in edits):
-                    # Apply Search & Replace edits
-                    success, error_msg = self._apply_search_replace(ctx, edits)
-                    if not success:
-                        print(colored(f"应用编辑失败: {error_msg}", "red"))
-                        return False
-                    print(colored(f"应用了 {len(edits)} 个编辑。", "green"))
-                    continue
-            except json.JSONDecodeError:
-                pass
-            
-            # Fallback: try git apply (legacy diff format)
-            res = self.tool_router.git_apply_patch(patch_text, cwd=ctx.workspace)
-            if res["exit_code"] != 0:
-                print(colored("应用补丁失败", "red"))
-                print(res["stderr"])
-                return False
-        print(colored("补丁应用成功。", "green"))
-        return True
-
-    def _apply_search_replace(self, ctx: RunContext, edits: list[dict]) -> tuple[bool, str]:
-        """Apply Search & Replace edits to files."""
-        for i, edit in enumerate(edits):
-            file_path = edit.get("file_path", "")
-            search_block = edit.get("search_block", "")
-            replace_block = edit.get("replace_block", "")
-            
-            if not file_path or not search_block:
-                return False, f"编辑 {i+1} 缺少必要字段"
-            
-            # Resolve file path relative to workspace and repo_root, with prefix stripping fallback
-            candidates = []
-            ws = Path(ctx.workspace)
-            repo_root = getattr(ctx.tool_router, "repo_root", ws)
-            candidates.append(ws / file_path)
-            candidates.append(Path(repo_root) / file_path)
-            if file_path.startswith("demo_c_project/"):
-                trimmed = file_path.split("/", 1)[1]
-                candidates.append(ws / trimmed)
-                candidates.append(Path(repo_root) / trimmed)
-
-            full_path = next((p for p in candidates if p.exists()), None)
-            if full_path is None:
-                return False, f"文件不存在: {file_path}"
-            
-            try:
-                content = full_path.read_text(encoding="utf-8")
-                
-                if search_block not in content:
-                    return False, f"在 {file_path} 中找不到 search_block（编辑 {i+1}）"
-                
-                occurrences = content.count(search_block)
-                if occurrences > 1:
-                    # Apply only the first occurrence and warn
-                    ctx.events.emit("apply.edit.multi_match", {
-                        "file": str(full_path.relative_to(repo_root) if full_path.exists() else file_path),
-                        "occurrences": occurrences,
-                        "edit_index": i + 1,
-                    })
-                new_content = content.replace(search_block, replace_block, 1)
-                full_path.write_text(new_content, encoding="utf-8")
-                
-                ctx.events.emit("apply.edit", {
-                    "file": file_path,
-                    "search_len": len(search_block),
-                    "replace_len": len(replace_block)
-                })
-                
+                payload = json.loads(patch_text)
+                req = parse_request(payload)
             except Exception as e:
-                return False, f"处理文件 {file_path} 时出错: {e}"
-        
-        return True, ""
+                print(colored(f"应用补丁失败：非法 JSON 或 schema 错误: {e}", "red"))
+                return False
+
+            result = executor.apply(req)
+            if not result.ok:
+                print(colored(f"应用编辑失败: {result.error}", "red"))
+                return False
+
+            ctx.events.emit("apply.diff", {"file": req.file_path, "diff": result.diff})
+            print(colored(f"应用编辑成功: {req.file_path}", "green"))
+        print(colored("所有补丁应用成功。", "green"))
+        return True
 
     def _collect_hints(self, ctx: RunContext) -> List[str]:
         hints: List[str] = []
