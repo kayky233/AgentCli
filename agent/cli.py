@@ -68,8 +68,17 @@ def main(argv=None):
     )
 
     if args.command == "models":
-        models = fetch_available_models()
-        render_models(models, args.filter or "")
+        console = Console()
+        console.print("[green]启动 models 命令[/green]")
+        try:
+            models = fetch_available_models()
+            console.print(f"[green]获取到 {len(models)} 条原始数据[/green]")
+            render_models(models, args.filter or "")
+            console.print("[green]models 命令结束[/green]")
+        except Exception as e:
+            console.print(f"[red]models 命令异常[/red]: {e}")
+            import traceback
+            console.print(traceback.format_exc())
     elif args.command == "plan":
         orchestrator.plan_only(args.task, args.as_json, args.auto)
     elif args.command == "do":
@@ -111,6 +120,7 @@ def fetch_available_models():
 
     try:
         resp = requests.get(url, headers=headers, timeout=15)
+        console.print(f"[cyan]HTTP {resp.status_code}，响应长度 {len(resp.text)} 字符[/cyan]")
         if resp.status_code != 200:
             console.print(f"[red]获取模型失败[/red]: http {resp.status_code}: {resp.text[:300]}")
             return []
