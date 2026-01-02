@@ -104,6 +104,20 @@ class Orchestrator:
                     ctx.events.emit("apply.result", {"status": "skip", "patches": []})
                 ctx.events.emit("stage.exit", {"stage": Stage.APPLY.name, "status": "ok"})
 
+                # Enforce test coverage: if code files changed but no test file changed, require another iteration to add tests.
+                need_tests, reason = self._check_test_coverage_needed(ctx)
+                if need_tests:
+                    ctx.policy["need_tests"] = True
+                    ctx.events.emit("policy.need_tests", {"reason": reason, "applied_files": list(ctx.applied_files)})
+                    print(colored(f"需要补齐测试用例覆盖：{reason}", "yellow"))
+                    if auto:
+                        # Skip build/test; loop back to request test edits.
+                        continue
+                    ans = input("需要补齐测试覆盖，继续迭代自动补测试？(y/n): ").strip().lower()
+                    if ans in ("y", "yes", ""):
+                        continue
+                    break
+
                 build_results = pipeline.run_stage(Stage.VERIFY_BUILD, ctx)
                 build_ok = build_results and build_results[-1].status == "ok"
                 print(colored(f"BUILD 结果：{'成功' if build_ok else '失败'}", "yellow" if build_ok else "red"))
@@ -121,8 +135,18 @@ class Orchestrator:
                 test_results = pipeline.run_stage(Stage.VERIFY_TEST, ctx)
                 test_ok = test_results and test_results[-1].status == "ok"
                 print(colored(f"TEST 结果：{'成功' if test_ok else '失败'}", "yellow" if test_ok else "red"))
-                if test_ok:
+                if test_ok and not ctx.policy.get("need_tests"):
                     print(colored("全部通过！", "green"))
+                    break
+                if test_ok and ctx.policy.get("need_tests"):
+                    # Tests passed but policy still requires coverage; keep iterating.
+                    print(colored("测试通过，但仍需补齐测试用例覆盖变更，继续迭代。", "yellow"))
+                    ctx.policy["need_tests"] = False
+                    if auto:
+                        continue
+                    ans = input("继续迭代补齐测试覆盖？(y/n): ").strip().lower()
+                    if ans in ("y", "yes", ""):
+                        continue
                     break
                 if auto:
                     continue
@@ -245,10 +269,37 @@ class Orchestrator:
                 print(colored(f"应用编辑失败: {result.error}", "red"))
                 return False
 
+            if req.file_path not in ctx.applied_files:
+                ctx.applied_files.append(req.file_path)
             ctx.events.emit("apply.diff", {"file": req.file_path, "diff": result.diff})
             print(colored(f"应用编辑成功: {req.file_path}", "green"))
         print(colored("所有补丁应用成功。", "green"))
         return True
+
+    def _check_test_coverage_needed(self, ctx: RunContext) -> tuple[bool, str]:
+        """
+        Heuristic: if we modified any non-test code files but did not touch any test files,
+        require adding/updating tests in a subsequent iteration.
+        """
+        applied = list(ctx.applied_files)
+        if not applied:
+            return False, ""
+
+        def is_test_file(p: str) -> bool:
+            s = p.replace("\\", "/").lower()
+            name = s.split("/")[-1]
+            return ("/tests/" in s) or ("/test/" in s) or name.startswith("test_") or name.endswith("_test.cpp") or name.endswith("_test.c") or name.endswith("_test.py")
+
+        def is_code_file(p: str) -> bool:
+            s = p.replace("\\", "/").lower()
+            return any(s.endswith(ext) for ext in [".c", ".h", ".cpp", ".hpp", ".cc"])
+
+        touched_tests = [p for p in applied if is_test_file(p)]
+        touched_code = [p for p in applied if is_code_file(p) and not is_test_file(p)]
+
+        if touched_code and not touched_tests:
+            return True, f"已修改代码文件 {touched_code} 但未修改任何测试文件"
+        return False, ""
 
     def _collect_hints(self, ctx: RunContext) -> List[str]:
         hints: List[str] = []

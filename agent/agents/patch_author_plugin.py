@@ -322,11 +322,19 @@ FILE EDITING PROTOCOL (STRICT)
         file_context_str = "\n\n".join(sections)
 
         # 3) User Message，给出任务与文件内容（单文件协议：一次只改一个 file_path）
+        need_tests = bool(getattr(ctx, "policy", {}).get("need_tests"))
+        need_tests_line = (
+            "IMPORTANT: You MUST add or update tests to cover the code changes in this iteration.\n"
+            if need_tests
+            else ""
+        )
+
         user = (
             f"Task: {ctx.task}\n\n"
             "Output ONE JSON OBJECT that conforms to the schema. Do NOT output arrays at top-level.\n"
             "Do NOT include file_path inside edits. edits items must use old_string/new_string/expected_replacements.\n"
             "If you need to modify multiple files, in THIS response only modify ONE file.\n\n"
+            + need_tests_line +
             f"{file_context_str}\n\n"
             "Output the JSON object now:"
         )

@@ -17,9 +17,12 @@ class TestTriage:
         res = self.tool_router.run_command(test_cmd, cwd=cwd)
         rm = getattr(ctx_or_state, "run_manager", self.run_manager)
         log_path = rm.save_verify_log(ctx_or_state, self.counter, "test", res["stdout"] + "\n" + res["stderr"])
-        summary = self._parse_xml(cwd) or self._parse_stdout(res["stdout"])
+        combined = (res["stdout"] or "") + "\n" + (res["stderr"] or "")
+        summary = self._parse_xml(cwd) or self._parse_stdout(combined)
         return {
-            "success": res["exit_code"] == 0,
+            # NOTE: demo Makefile uses `|| true`, so exit_code may be 0 even if tests failed.
+            # If we parsed any failed tests, treat as failure.
+            "success": (res["exit_code"] == 0) and (len(summary) == 0),
             "log": str(log_path),
             "raw": res,
             "summary": summary,
