@@ -28,7 +28,7 @@ def parse_request(obj) -> EditRequest:
     Raises ValueError on invalid input.
     """
     if not isinstance(obj, dict):
-        raise ValueError("Payload must be a JSON object")
+        raise ValueError("Payload must be a JSON object with fields: action, file_path, edits[]")
     action = obj.get("action")
     if action not in ("edit", "multi_edit"):
         raise ValueError("action must be 'edit' or 'multi_edit'")
@@ -45,7 +45,7 @@ def parse_request(obj) -> EditRequest:
         if "old_string" not in e or "new_string" not in e:
             raise ValueError(f"edit #{idx} missing old_string/new_string")
         if "expected_replacements" not in e:
-            raise ValueError(f"edit #{idx} missing expected_replacements")
+            raise ValueError(f"edit #{idx} missing expected_replacements (must be int)")
         old = e["old_string"]
         new = e["new_string"]
         exp = e["expected_replacements"]

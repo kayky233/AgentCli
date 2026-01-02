@@ -141,8 +141,14 @@ class PatchAuthorPlugin:
                     prompt_msgs.append(ChatMessage(
                         role="user",
                         content=(
-                            "你的输出无法解析为 JSON。请严格输出纯 JSON 数组，不要包含 ```json 或 ``` 之类的代码块标记，"
-                            "不要输出任何解释或额外文本。必须包含至少一个编辑对象。"
+                            "你的输出无法解析为 JSON。请严格输出 JSON 对象（非数组），schema:\n"
+                            "{\n"
+                            "  \"action\": \"edit\" | \"multi_edit\",\n"
+                            "  \"file_path\": \"path/to/file\",\n"
+                            "  \"edits\": [ {\"old_string\": \"...\", \"new_string\": \"...\", \"expected_replacements\": 1 } ],\n"
+                            "  \"message\": \"optional\"\n"
+                            "}\n"
+                            "禁止 ```json/``` 代码块，禁止解释文本。"
                         ),
                     ))
                     attempt += 1
@@ -172,7 +178,10 @@ class PatchAuthorPlugin:
                 if attempt < max_retries:
                     prompt_msgs.append(ChatMessage(
                         role="user",
-                        content=f"{err_msg}。请按编辑协议输出 JSON，并确保字段齐全。",
+                        content=(
+                            f"{err_msg}。请按编辑协议输出 JSON（禁止数组顶层，必须包含 action/file_path/edits/expected_replacements），"
+                            "禁止 markdown 代码块，不要解释。"
+                        ),
                     ))
                     attempt += 1
                     continue
