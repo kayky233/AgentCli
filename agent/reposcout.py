@@ -12,8 +12,13 @@ class RepoScout:
         search_terms = [h for h in hints if h]
         search_terms.append(state.task)
         unique_terms = list({t for t in search_terms if t})
+        skills = getattr(state, "skills", None)
         for term in unique_terms:
-            out = self.tool_router.search(term, cwd=Path.cwd())
+            if skills:
+                res = skills.run("search", state, pattern=term, cwd=Path.cwd())
+                out = res.data if res.ok else ""
+            else:
+                out = self.tool_router.search(term, cwd=Path.cwd())
             self.run_manager.save_context_search(state, out)
             summary.append({"term": term, "matches": out.splitlines()[:20]})
         return {"terms": unique_terms, "files": summary}

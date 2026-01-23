@@ -14,7 +14,7 @@ class TestTriage:
 
     def run(self, ctx_or_state, test_cmd: Union[str, List[str]], cwd: Path) -> Dict:
         self.counter += 1
-        res = self.tool_router.run_command(test_cmd, cwd=cwd)
+        res = self._run_command(ctx_or_state, test_cmd, cwd=cwd)
         rm = getattr(ctx_or_state, "run_manager", self.run_manager)
         log_path = rm.save_verify_log(ctx_or_state, self.counter, "test", res["stdout"] + "\n" + res["stderr"])
         combined = (res["stdout"] or "") + "\n" + (res["stderr"] or "")
@@ -57,4 +57,19 @@ class TestTriage:
             if m:
                 items.append({"suite": m.group(1), "case": m.group(2), "message": line.strip()})
         return items
+
+    def _run_command(self, ctx_or_state, cmd: Union[str, List[str]], cwd: Path) -> Dict:
+        skills = getattr(ctx_or_state, "skills", None)
+        if skills:
+            res = skills.run("run_command", ctx_or_state, cmd=cmd, cwd=cwd)
+            if res.ok and isinstance(res.data, dict):
+                return res.data
+            return {
+                "cmd": cmd,
+                "cwd": str(cwd),
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": f"run_command skill failed: {res.error or 'unknown'}",
+            }
+        return self.tool_router.run_command(cmd, cwd=cwd)
 

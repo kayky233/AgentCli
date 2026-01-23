@@ -13,6 +13,7 @@ from .agents.patch_author_plugin import PatchAuthorPlugin
 from .agents.build_plugin import BuildPlugin
 from .agents.test_plugin import TestPlugin
 from .llm.service import LLMService
+from .skills import ReadFileSkill, RunCommandSkill, SearchSkill, SkillRegistry
 from .utils import colored
 
 
@@ -227,6 +228,7 @@ class Orchestrator:
             tool_router=self.tool_router,
             run_manager=self.run_manager,
             events=events,
+            skills=self._make_skills(),
             iteration=state.iteration,
             services={"llm": LLMService.from_env()},
             file_contents={},
@@ -241,6 +243,13 @@ class Orchestrator:
         reg.register(Stage.VERIFY_BUILD, BuildPlugin())
         reg.register(Stage.VERIFY_TEST, TestPlugin())
         return PipelineRunner(reg)
+
+    def _make_skills(self) -> SkillRegistry:
+        registry = SkillRegistry()
+        registry.register(SearchSkill())
+        registry.register(ReadFileSkill())
+        registry.register(RunCommandSkill())
+        return registry
 
     def _apply_patches(self, ctx: RunContext) -> bool:
         if not ctx.patch_queue:

@@ -329,13 +329,15 @@ FILE EDITING PROTOCOL (STRICT)
             else ""
         )
 
+        diagnostics = self._build_diagnostics_block(ctx)
         user = (
             f"Task: {ctx.task}\n\n"
             "Output ONE JSON OBJECT that conforms to the schema. Do NOT output arrays at top-level.\n"
             "Do NOT include file_path inside edits. edits items must use old_string/new_string/expected_replacements.\n"
             "If you need to modify multiple files, in THIS response only modify ONE file.\n\n"
-            + need_tests_line +
-            f"{file_context_str}\n\n"
+            + need_tests_line
+            + diagnostics
+            + f"{file_context_str}\n\n"
             "Output the JSON object now:"
         )
 
@@ -350,18 +352,44 @@ FILE EDITING PROTOCOL (STRICT)
         if not full_path.exists():
             return "[File not found]"
         try:
-            with open(full_path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
-                if len(lines) <= 300:
-                    content = "".join(lines)
-                else:
-                    content = "".join(lines[:150]) + "\n... (omitted middle lines) ...\n" + "".join(lines[-150:])
-                # cache for later validation/execution
-                if hasattr(ctx, "file_contents"):
-                    ctx.file_contents[file_path] = content if len(lines) <= 300 else full_path.read_text(encoding="utf-8", errors="replace")
-                return content
+            raw_text = None
+            if getattr(ctx, "skills", None):
+                res = ctx.skills.run("read_file", ctx, path=full_path, mode="raw")
+                if res.ok:
+                    raw_text = res.data
+            if raw_text is None:
+                raw_text = full_path.read_text(encoding="utf-8", errors="replace")
+            lines = raw_text.splitlines(keepends=True)
+            if len(lines) <= 300:
+                content = "".join(lines)
+            else:
+                content = "".join(lines[:150]) + "\n... (omitted middle lines) ...\n" + "".join(lines[-150:])
+            # cache for later validation/execution
+            if hasattr(ctx, "file_contents"):
+                ctx.file_contents[file_path] = content if len(lines) <= 300 else raw_text
+            return content
         except Exception as e:
             return f"[Error reading file: {e}]"
+
+    def _build_diagnostics_block(self, ctx) -> str:
+        parts = []
+        last_build = getattr(ctx, "last_build_result", None) or {}
+        last_test = getattr(ctx, "last_test_result", None) or {}
+
+        if last_build:
+            summary = last_build.get("summary") or []
+            if summary:
+                lines = [f"{i+1}. {item.get('file','')}:{item.get('line','')} {item.get('message','')}" for i, item in enumerate(summary)]
+                parts.append("BUILD ERRORS:\n" + "\n".join(lines))
+        if last_test:
+            summary = last_test.get("summary") or []
+            if summary:
+                lines = [f"{i+1}. {item.get('suite','')}.{item.get('case','')} {item.get('message','')}" for i, item in enumerate(summary)]
+                parts.append("TEST FAILURES:\n" + "\n".join(lines))
+
+        if not parts:
+            return ""
+        return "DIAGNOSTICS (from last run):\n" + "\n\n".join(parts) + "\n\n"
 
     def _parse_edits(self, text: str) -> tuple[dict, str]:
         """Parse JSON payload from LLM response, handling markdown code blocks."""

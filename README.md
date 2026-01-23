@@ -8,6 +8,14 @@
 
 AgentCli 解决的问题：在本地仓库中，把“理解代码 → 生成修改 → 应用修改 → 构建 → 测试 → 反馈纠错”做成一个**可重复、可审计、可回放**的 CLI 闭环，尤其适用于 C/C++ 工程（`make -j` + `make test` / gtest 风格输出）。
 
+快速体验（Web UI）：
+
+```bash
+python -m agent.cli ui --host 127.0.0.1 --port 8080
+```
+
+打开浏览器访问 `http://127.0.0.1:8080`，输入需求或上传需求文件，完成后下载源码压缩包。
+
 与“朴素 LLM 写代码”/“直接吐 diff 然后 git apply”的区别：
 
 - **不是代码生成器**：AgentCli 的核心是“在已有代码上做**确定性变换**”，并通过 build/test 验证结果。
@@ -319,6 +327,20 @@ AgentCli 的扩展遵循“pipeline + plugin”的结构：
 - 只在 EDIT 阶段（PatchAuthorPlugin）生成“写操作指令”，其他 agent 不直接改 workspace 文件
 - 所有外部命令通过 `agent/tool_router.py` 执行（便于统一日志截断与可观测性）
 - 任何自动修复都必须能被 build/test 验证，否则视为未完成
+
+### 9.4 Skills 扩展（推荐方式）
+
+为方便集成新工具与能力，新增了 **Skill Registry**：
+
+- 技能接口：`agent/skills/base.py`（统一 `run(ctx, **kwargs)`）
+- 注册中心：`agent/skills/registry.py`
+- 内置技能：`agent/skills/builtin.py`（search/read_file/run_command）
+- 运行时注入：`Orchestrator._make_skills()` → `RunContext.skills`
+
+使用建议：
+
+- 在 agent/插件内部优先调用 `ctx.skills.run("skill_id", ctx, ...)`
+- 如果没有 skill（兼容旧逻辑），可回退到 `tool_router`
 
 ---
 

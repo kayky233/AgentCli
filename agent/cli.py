@@ -43,6 +43,10 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--make-cmd", help="指定 make 命令或路径", dest="make_cmd")
     resume.add_argument("--no-make-fallback", action="store_true", help="禁止无 make 时的 python fallback")
     resume.add_argument("--use-wsl", action="store_true", help="在 Windows 下通过 WSL 执行构建命令")
+
+    ui = sub.add_parser("ui", help="启动简单 Web UI")
+    ui.add_argument("--host", default="127.0.0.1", help="监听地址")
+    ui.add_argument("--port", type=int, default=8080, help="监听端口")
     return parser
 
 
@@ -87,6 +91,19 @@ def main(argv=None):
         orchestrator.rollback()
     elif args.command == "resume":
         orchestrator.run(task=None, auto=args.auto, resume=True)
+    elif args.command == "ui":
+        from .web_ui import run_server
+
+        print(">>> DEBUG: Entering UI Command", flush=True)
+        print(f">>> DEBUG: UI args host={args.host} port={args.port}", flush=True)
+        print(">>> DEBUG: Calling run_server()", flush=True)
+        run_server(host=args.host, port=args.port)
+        print(">>> DEBUG: run_server() returned", flush=True)
+        import time
+
+        print("UI 已退出，保持进程运行（Ctrl+C 退出）。", flush=True)
+        while True:
+            time.sleep(1)
     else:
         parser.print_help()
 
