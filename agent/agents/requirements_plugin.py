@@ -21,6 +21,7 @@ class RequirementsAgentPlugin:
     priority: int = 100
 
     def run(self, ctx, request=None) -> AgentResult:
+        print("--- [DEBUG] RequirementsAgentPlugin.run() STARTED ---")
         llm: LLMService = ctx.services.get("llm") if ctx.services else None
         if not llm or not llm.enabled():
             note = "LLM 未配置，跳过需求分析阶段"
@@ -84,6 +85,7 @@ class RequirementsAgentPlugin:
         resp = llm.generate_patch(messages)
         if not resp.get("ok"):
             err = resp.get("error") or "LLM 调用失败"
+            print(f"[DEBUG] Error: {err}")
             ctx.events.emit("requirements.error", {"error": err}, level="error")
             ctx.requirements = None
             return AgentResult(status="warn", outputs={"error": err})
@@ -104,6 +106,7 @@ class RequirementsAgentPlugin:
                 raise ValueError("顶层必须是 JSON 对象")
         except Exception as e:
             err = f"无法解析需求 JSON：{e}"
+            print(f"[DEBUG] Error: {err}")
             ctx.events.emit("requirements.parse_fail", {"error": err}, level="error")
             ctx.requirements = None
             return AgentResult(status="warn", outputs={"error": err})
