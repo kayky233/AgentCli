@@ -32,9 +32,9 @@ class BuildPlugin:
             if tw.is_dir():
                 cwd = tw
             else:
-                cwd = ctx.workspace
+                cwd = getattr(ctx, "target_workspace", None) or ctx.workspace
         else:
-            cwd = ctx.workspace
+            cwd = getattr(ctx, "target_workspace", None) or ctx.workspace
 
         res = self.agent.run(ctx, build_cmd, cwd=cwd)
         ctx.last_build_result = res

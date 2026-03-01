@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict
 
 from ..tester import TestTriage
@@ -34,7 +35,6 @@ class TestPlugin:
         # Prefer target_workspace under the repo root if it exists, otherwise fall back to ctx.workspace.
         repo_root = getattr(ctx, "repo_root", None)
         if repo_root is not None:
-            from pathlib import Path
             tw = Path(repo_root) / "target_workspace"
             if tw.is_dir():
                 cwd = tw
