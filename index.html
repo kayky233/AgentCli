@@ -406,6 +406,10 @@
         <button data-tab="evidence" class="tab-btn">Evidence</button>
       </div>
       <div id="tab-progress" class="tab-content">
+        <div id="final-output" style="margin-bottom:8px; padding:6px; border-radius:4px; border:1px solid #1f2937; background:#020617; font-size:12px; color:#e5e7eb; display:none;">
+          <div style="font-weight:600; margin-bottom:4px;">Final Output</div>
+          <pre id="final-output-body" style="margin:0; white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size:12px; color:#d1d5db;"></pre>
+        </div>
         <div id="stage-timeline" class="stage-timeline"></div>
       </div>
       <div id="tab-logs" class="tab-content" style="display:none;">
@@ -739,6 +743,23 @@
       });
     }
 
+    function renderFinalOutput(run) {
+      const container = document.getElementById("final-output");
+      const bodyEl = document.getElementById("final-output-body");
+      if (!container || !bodyEl) return;
+
+      const fo = run && run.final_output;
+      if (!fo) {
+        container.style.display = "none";
+        bodyEl.textContent = "";
+        return;
+      }
+
+      // Render as pretty JSON by default; backend already structures answer/summary.
+      bodyEl.textContent = JSON.stringify(fo, null, 2);
+      container.style.display = "block";
+    }
+
     function renderEvidence(state) {
       const build = state.last_build_result || null;
       const test = state.last_test_result || null;
@@ -875,6 +896,8 @@
           status: run.status,
           current_stage: run.current_stage,
           elapsed_ms: run.elapsed_ms,
+          steps_done: run.steps_done,
+          steps_total: run.steps_total,
         };
         if (idx >= 0) {
           runs[idx] = { ...runs[idx], ...entry };
@@ -883,6 +906,8 @@
         }
         renderRunsList();
         updateRunHeader(entry);
+        renderStageTimeline(run);
+        renderFinalOutput(run);
       } catch (e) {
         console.warn("Error fetching run detail", e);
       }
@@ -918,6 +943,8 @@
             status: run.status,
             current_stage: run.current_stage,
             elapsed_ms: run.elapsed_ms,
+            steps_done: run.steps_done,
+            steps_total: run.steps_total,
           };
           if (idx >= 0) {
             runs[idx] = { ...runs[idx], ...entry };
@@ -926,6 +953,8 @@
           }
           renderRunsList();
           updateRunHeader(entry);
+          renderStageTimeline(run);
+          renderFinalOutput(run);
           if (run.status === "succeeded" || run.status === "failed") {
             clearInterval(runPollIntervalId);
             runPollIntervalId = null;
