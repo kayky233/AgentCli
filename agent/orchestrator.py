@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional, List
 
@@ -46,6 +47,49 @@ class Orchestrator:
         else:
             self._print_plan(plan)
         return plan
+
+    def run_daemon(self) -> None:
+        """
+        Daemon mode: continuously watch for pending_tasks.json and process tasks.
+
+        - If pending_tasks.json exists:
+            * read ALL lines (one JSON object per line)
+            * delete the file
+            * execute each task sequentially via self.run(task, auto=True)
+        - If file does not exist: sleep 2 seconds and poll again.
+        """
+        pending_path = self.repo_root / "pending_tasks.json"
+        print(colored(f"[daemon] Watching for tasks in {pending_path}", "blue"))
+        while True:
+            if pending_path.exists():
+                try:
+                    lines = pending_path.read_text(encoding="utf-8").splitlines()
+                    pending_path.unlink()
+                except Exception as e:
+                    print(colored(f"[daemon] Failed to read/delete pending_tasks.json: {e}", "red"))
+                    time.sleep(2)
+                    continue
+
+                tasks: List[str] = []
+                for ln in lines:
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    try:
+                        obj = json.loads(ln)
+                        task_text = str(obj.get("task", "")).strip()
+                        if task_text:
+                            tasks.append(task_text)
+                    except Exception as e:
+                        print(colored(f"[daemon] Failed to parse task line: {e}", "red"))
+
+                for task in tasks:
+                    print(colored(f"[daemon] Starting task: {task}", "green"))
+                    # auto=True to avoid blocking prompts; state updates still go through _update_state_file
+                    self.run(task, auto=True)
+                    print(colored(f"[daemon] Finished task: {task}", "green"))
+
+            time.sleep(2)
 
     def run(self, task: Optional[str], auto: bool, resume: bool = False) -> None:
         if resume:

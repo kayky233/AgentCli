@@ -28,8 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--use-wsl", action="store_true", help="在 Windows 下通过 WSL 执行构建命令")
 
     do = sub.add_parser("do", help="执行任务")
-    do.add_argument("task", help="任务描述")
+    do.add_argument("task", nargs="?", help="任务描述（普通模式必填；守护进程模式可省略）")
     do.add_argument("--auto", action="store_true", help="自动执行到底")
+    do.add_argument("--daemon", action="store_true", help="守护进程模式：持续监听 pending_tasks.json 并执行任务")
     do.add_argument("--build-only", action="store_true", help="仅构建，跳过测试")
     do.add_argument("--make-cmd", help="指定 make 命令或路径", dest="make_cmd")
     do.add_argument("--no-make-fallback", action="store_true", help="禁止无 make 时的 python fallback")
@@ -86,7 +87,13 @@ def main(argv=None):
     elif args.command == "plan":
         orchestrator.plan_only(args.task, args.as_json, args.auto)
     elif args.command == "do":
-        orchestrator.run(args.task, auto=args.auto)
+        if getattr(args, "daemon", False):
+            # Daemon mode: ignore immediate task argument, continuously process pending_tasks.json
+            orchestrator.run_daemon()
+        else:
+            if not args.task:
+                parser.error("do: the following arguments are required: task (when not using --daemon)")
+            orchestrator.run(args.task, auto=args.auto)
     elif args.command == "rollback":
         orchestrator.rollback()
     elif args.command == "resume":
