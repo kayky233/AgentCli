@@ -205,8 +205,8 @@ async def add_task(request: Request):
     """
     Legacy endpoint: append an incoming task to pending_tasks.json.
 
-    NOTE: For new implementations prefer POST /api/runs, which enqueues a run
-    directly into the in-process worker queue and returns run_id immediately.
+    Additionally, initialize RUN_STATE_CACHE and enqueue into RUN_QUEUE so that
+    /api/runs/{run_id} works and the background worker will execute the run.
     """
     data = await request.json()
     task = (data.get("task") or "").strip()
@@ -231,6 +231,31 @@ async def add_task(request: Request):
             content={"error": f"failed to append task: {e}"},
             status_code=500,
         )
+
+    # Initialize run state and enqueue into worker queue so this run is visible and processed.
+    stages = [
+        {"name": "PLAN", "status": "pending", "message": "", "started_at": None, "ended_at": None},
+        {"name": "GATHER", "status": "pending", "message": "", "started_at": None, "ended_at": None},
+        {"name": "EDIT", "status": "pending", "message": "", "started_at": None, "ended_at": None},
+        {"name": "APPLY", "status": "pending", "message": "", "started_at": None, "ended_at": None},
+        {"name": "PREPARE", "status": "pending", "message": "", "started_at": None, "ended_at": None},
+        {"name": "VERIFY_BUILD", "status": "pending", "message": "", "started_at": None, "ended_at": None},
+        {"name": "VERIFY_TEST", "status": "pending", "message": "", "started_at": None, "ended_at": None},
+    ]
+    RUN_STATE_CACHE[run_id] = {
+        "run_id": run_id,
+        "task": task,
+        "status": "queued",
+        "current_stage": None,
+        "steps_done": 0,
+        "steps_total": len(stages),
+        "elapsed_ms": None,
+        "stages": stages,
+        "last_error": None,
+        "events_tail": [],
+    }
+    await RUN_QUEUE.put(run_id)
+
     return {"status": "received", "task": entry, "run_id": run_id}
 
 
