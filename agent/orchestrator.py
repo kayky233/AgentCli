@@ -9,7 +9,7 @@ from .framework.pipeline import PipelineRunner
 from .framework.registry import AgentRegistry
 from .agents.env_agent_plugin import EnvAgentPlugin
 from .agents.reposcout_plugin import RepoScoutPlugin
-from .agents.patch_author_plugin import PatchAuthorPlugin
+from .agents.aider_edit_plugin import AiderEditPlugin
 from .agents.build_plugin import BuildPlugin
 from .agents.test_plugin import TestPlugin
 from .agents.requirements_plugin import RequirementsAgentPlugin
@@ -247,7 +247,7 @@ class Orchestrator:
         reg.register(Stage.PREPARE, EnvAgentPlugin())
         # GATHER / EDIT / VERIFY
         reg.register(Stage.GATHER, RepoScoutPlugin())
-        reg.register(Stage.EDIT, PatchAuthorPlugin())
+        reg.register(Stage.EDIT, AiderEditPlugin())
         reg.register(Stage.VERIFY_BUILD, BuildPlugin())
         reg.register(Stage.VERIFY_TEST, TestPlugin())
         return PipelineRunner(reg)
