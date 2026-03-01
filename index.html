@@ -139,6 +139,25 @@
     </div>
   </div>
   <div id="task"></div>
+
+  <div class="meta" style="margin-top: 8px;">
+    <div class="meta-item" style="flex: 1 1 260px;">
+      <span class="label">Runs</span>
+      <span class="value">Recent</span>
+      <div id="runs-list" style="margin-top: 6px; max-height: 140px; overflow-y: auto;"></div>
+    </div>
+    <div class="meta-item" style="flex: 2 1 360px;">
+      <span class="label">Run Detail</span>
+      <span class="value" id="run-detail-title">-</span>
+      <div id="run-tabs" style="margin-top: 6px;">
+        <button data-tab="progress" class="tab-btn active">Progress</button>
+        <button data-tab="logs" class="tab-btn">Logs</button>
+        <button data-tab="changes" class="tab-btn">Changes</button>
+        <button data-tab="evidence" class="tab-btn">Evidence</button>
+      </div>
+    </div>
+  </div>
+
   <div id="logs"></div>
 
   <div class="chat-container">
