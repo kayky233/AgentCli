@@ -326,12 +326,21 @@ async def worker_loop():
     Background worker that consumes run_ids from RUN_QUEUE and executes the
     pipeline in a separate thread, updating RUN_STATE_CACHE and emitting logs.
 
-    NOTE: The actual orchestration/pipeline execution remains in the CLI app.
-    This worker is a placeholder to demonstrate queue consumption and state
-    transitions without blocking the FastAPI event loop.
+    NOTE: This demo worker simulates a full pipeline by iterating through
+    STAGES_ORDER and updating each stage's status.
     """
     import time as _time
     import traceback
+
+    STAGES_ORDER = [
+        "PLAN",
+        "GATHER",
+        "EDIT",
+        "APPLY",
+        "PREPARE",
+        "VERIFY_BUILD",
+        "VERIFY_TEST",
+    ]
 
     while True:
         run_id = await RUN_QUEUE.get()
@@ -342,41 +351,60 @@ async def worker_loop():
             continue
 
         start_ts = _time.time()
-        # Mark run as running and start first stage in the simplified demo pipeline.
         state["status"] = "running"
-        state["current_stage"] = "PLAN"
-        # Ensure stages list exists with full pipeline; first stage -> running
-        stages = state.get("stages") or []
-        now = start_ts
-        for st in stages:
-            if st.get("name") == "PLAN":
-                st["status"] = "running"
-                st["started_at"] = now
-        state["stages"] = stages
         state["steps_done"] = 0
-        state["steps_total"] = len(stages)
+        stages = state.get("stages") or []
+        # Ensure stages list exists and matches STAGES_ORDER
+        stages_map = {st.get("name"): st for st in stages if st.get("name")}
+        normalized_stages = []
+        for name in STAGES_ORDER:
+            st = stages_map.get(name) or {
+                "name": name,
+                "status": "pending",
+                "message": "",
+                "started_at": None,
+                "ended_at": None,
+            }
+            normalized_stages.append(st)
+        state["stages"] = normalized_stages
+        state["steps_total"] = len(normalized_stages)
         RUN_STATE_CACHE[run_id] = state
 
         try:
-            # Simulate a blocking pipeline call in a worker thread.
-            async def _simulate_pipeline():
-                def _work():
-                    _time.sleep(2.0)
+            for idx, stage_name in enumerate(STAGES_ORDER):
+                now = _time.time()
+                state["current_stage"] = stage_name
+                # mark stage running
+                for st in state["stages"]:
+                    if st["name"] == stage_name:
+                        st["status"] = "running"
+                        st["started_at"] = st.get("started_at") or now
+                        break
+                RUN_STATE_CACHE[run_id] = state
 
-                await asyncio.to_thread(_work)
+                # Simulate work for this stage in a worker thread.
+                async def _simulate_stage():
+                    def _work():
+                        _time.sleep(0.5)
 
-            await _simulate_pipeline()
+                    await asyncio.to_thread(_work)
 
-            # Mark PLAN as completed
+                await _simulate_stage()
+
+                # mark stage succeeded
+                end_stage_ts = _time.time()
+                for st in state["stages"]:
+                    if st["name"] == stage_name:
+                        st["status"] = "succeeded"
+                        st["ended_at"] = end_stage_ts
+                        break
+                state["steps_done"] = idx + 1
+                RUN_STATE_CACHE[run_id] = state
+
+            # all stages done
             end_ts = _time.time()
-            for st in state["stages"]:
-                if st.get("name") == "PLAN":
-                    st["status"] = "succeeded"
-                    st["ended_at"] = end_ts
-            state["steps_done"] = 1
             state["status"] = "succeeded"
             state["elapsed_ms"] = int((end_ts - start_ts) * 1000)
-            state["current_stage"] = "PLAN"
             RUN_STATE_CACHE[run_id] = state
         except Exception:
             end_ts = _time.time()
