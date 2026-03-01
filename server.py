@@ -1,6 +1,8 @@
 from pathlib import Path
+import json
+from datetime import datetime
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 
 app = FastAPI()
@@ -44,6 +46,36 @@ def index():
     if not index_path.exists():
         return HTMLResponse("<html><body><h1>agent_state dashboard missing index.html</h1></body></html>")
     return FileResponse(index_path)
+
+
+@app.post("/task")
+async def add_task(request: Request):
+    """
+    Append an incoming task to pending_tasks.json (one JSON object per line).
+    Expected payload: {"task": "..."}.
+    """
+    data = await request.json()
+    task = (data.get("task") or "").strip()
+    if not task:
+        return JSONResponse(
+            content={"error": "task is required"},
+            status_code=400,
+        )
+
+    entry = {
+        "task": task,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    }
+    pending_path = Path("pending_tasks.json")
+    try:
+        with pending_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        return JSONResponse(
+            content={"error": f"failed to append task: {e}"},
+            status_code=500,
+        )
+    return {"status": "received", "task": entry}
 
 
 if __name__ == "__main__":
