@@ -112,18 +112,22 @@ class Orchestrator:
         pipeline = self._make_pipeline()
 
         try:
-            # mark run started
+            # mark run created/start lifecycle
             ctx.status = "running"
             ctx.started_at = time.time()
+            ctx.events.emit("run.lifecycle", {"phase": "created", "run_id": ctx.run_id})
+            ctx.events.emit("run.lifecycle", {"phase": "started", "run_id": ctx.run_id})
             self._update_state_file(ctx)
 
             # PLAN: generate structured requirements spec (if LLM available)
             ctx.current_stage = Stage.PLAN.name
             self._mark_stage_start(ctx, Stage.PLAN.name)
+            ctx.events.emit("stage.lifecycle", {"phase": "start", "stage": Stage.PLAN.name})
             self._update_state_file(ctx)
             print("--- [DEBUG] Orchestrator is calling PLAN stage ---")
             pipeline.run_stage(Stage.PLAN, ctx)
             self._mark_stage_end(ctx, Stage.PLAN.name, success=True)
+            ctx.events.emit("stage.lifecycle", {"phase": "end", "stage": Stage.PLAN.name, "status": "succeeded"})
             self._update_state_file(ctx)
 
             iteration = 0
@@ -140,18 +144,22 @@ class Orchestrator:
                 # GATHER: understand repo / context for current iteration
                 ctx.current_stage = Stage.GATHER.name
                 self._mark_stage_start(ctx, Stage.GATHER.name)
+                ctx.events.emit("stage.lifecycle", {"phase": "start", "stage": Stage.GATHER.name})
                 self._update_state_file(ctx)
                 pipeline.run_stage(Stage.GATHER, ctx, request=self._collect_hints(ctx))
                 self._mark_stage_end(ctx, Stage.GATHER.name, success=True)
+                ctx.events.emit("stage.lifecycle", {"phase": "end", "stage": Stage.GATHER.name, "status": "succeeded"})
                 self._update_state_file(ctx)
                 print(colored("GATHER 完成", "blue"))
 
                 # EDIT: generate or modify code BEFORE environment decision
                 ctx.current_stage = Stage.EDIT.name
                 self._mark_stage_start(ctx, Stage.EDIT.name)
+                ctx.events.emit("stage.lifecycle", {"phase": "start", "stage": Stage.EDIT.name})
                 self._update_state_file(ctx)
                 pipeline.run_stage(Stage.EDIT, ctx)
                 self._mark_stage_end(ctx, Stage.EDIT.name, success=True)
+                ctx.events.emit("stage.lifecycle", {"phase": "end", "stage": Stage.EDIT.name, "status": "succeeded"})
                 self._update_state_file(ctx)
                 print(colored(f"EDIT 完成，补丁数：{len(ctx.patch_queue)}", "blue"))
 
@@ -159,6 +167,7 @@ class Orchestrator:
 
                 ctx.current_stage = Stage.APPLY.name
                 self._mark_stage_start(ctx, Stage.APPLY.name)
+                ctx.events.emit("stage.lifecycle", {"phase": "start", "stage": Stage.APPLY.name})
                 self._update_state_file(ctx)
                 ctx.events.emit("stage.enter", {"stage": Stage.APPLY.name})
                 if ctx.patch_queue:
@@ -172,20 +181,24 @@ class Orchestrator:
                     if not apply_ok:
                         ctx.events.emit("stage.exit", {"stage": Stage.APPLY.name, "status": "fail"})
                         self._mark_stage_end(ctx, Stage.APPLY.name, success=False, message="apply failed")
+                        ctx.events.emit("stage.lifecycle", {"phase": "end", "stage": Stage.APPLY.name, "status": "failed"})
                         self._update_state_file(ctx)
                         break
                 else:
                     ctx.events.emit("apply.result", {"status": "skip", "patches": []})
                 ctx.events.emit("stage.exit", {"stage": Stage.APPLY.name, "status": "ok"})
                 self._mark_stage_end(ctx, Stage.APPLY.name, success=True)
+                ctx.events.emit("stage.lifecycle", {"phase": "end", "stage": Stage.APPLY.name, "status": "succeeded"})
                 self._update_state_file(ctx)
 
                 # PREPARE: environment decision AFTER code is materialized on disk
                 ctx.current_stage = Stage.PREPARE.name
                 self._mark_stage_start(ctx, Stage.PREPARE.name)
+                ctx.events.emit("stage.lifecycle", {"phase": "start", "stage": Stage.PREPARE.name})
                 self._update_state_file(ctx)
                 pipeline.run_stage(Stage.PREPARE, ctx)
                 self._mark_stage_end(ctx, Stage.PREPARE.name, success=True)
+                ctx.events.emit("stage.lifecycle", {"phase": "end", "stage": Stage.PREPARE.name, "status": "succeeded"})
                 self._update_state_file(ctx)
                 if not ctx.env_decision or ctx.env_decision.get("strategy") == "error":
                     print(colored("环境决策失败，无法继续。", "red"))
@@ -215,10 +228,19 @@ class Orchestrator:
                 # VERIFY_BUILD: build after env decision
                 ctx.current_stage = Stage.VERIFY_BUILD.name
                 self._mark_stage_start(ctx, Stage.VERIFY_BUILD.name)
+                ctx.events.emit("stage.lifecycle", {"phase": "start", "stage": Stage.VERIFY_BUILD.name})
                 self._update_state_file(ctx)
                 build_results = pipeline.run_stage(Stage.VERIFY_BUILD, ctx)
                 build_ok = build_results and build_results[-1].status == "ok"
                 self._mark_stage_end(ctx, Stage.VERIFY_BUILD.name, success=build_ok)
+                ctx.events.emit(
+                    "stage.lifecycle",
+                    {
+                        "phase": "end",
+                        "stage": Stage.VERIFY_BUILD.name,
+                        "status": "succeeded" if build_ok else "failed",
+                    },
+                )
                 self._update_state_file(ctx)
                 print(colored(f"BUILD 结果：{'成功' if build_ok else '失败'}", "yellow" if build_ok else "red"))
                 if not build_ok:
@@ -235,10 +257,19 @@ class Orchestrator:
 
                 ctx.current_stage = Stage.VERIFY_TEST.name
                 self._mark_stage_start(ctx, Stage.VERIFY_TEST.name)
+                ctx.events.emit("stage.lifecycle", {"phase": "start", "stage": Stage.VERIFY_TEST.name})
                 self._update_state_file(ctx)
                 test_results = pipeline.run_stage(Stage.VERIFY_TEST, ctx)
                 test_ok = test_results and test_results[-1].status == "ok"
                 self._mark_stage_end(ctx, Stage.VERIFY_TEST.name, success=test_ok)
+                ctx.events.emit(
+                    "stage.lifecycle",
+                    {
+                        "phase": "end",
+                        "stage": Stage.VERIFY_TEST.name,
+                        "status": "succeeded" if test_ok else "failed",
+                    },
+                )
                 self._update_state_file(ctx)
                 print(colored(f"TEST 结果：{'成功' if test_ok else '失败'}", "yellow" if test_ok else "red"))
                 if test_ok and not ctx.policy.get("need_tests"):
@@ -265,12 +296,25 @@ class Orchestrator:
                     break
         except Exception as exc:
             if 'ctx' in locals():
-                ctx.events.emit("run.error", {"error": str(exc)}, level="error")
+                import traceback
+
+                tb = traceback.format_exc()
+                ctx.events.emit("run.error", {"error": str(exc), "traceback": tb}, level="error")
                 ctx.status = "failed"
                 ctx.ended_at = time.time()
                 if ctx.started_at is not None:
                     ctx.elapsed_ms = int((ctx.ended_at - ctx.started_at) * 1000)
+                # store last error so Evidence/Logs can surface it
+                ctx.last_error = {"error": str(exc), "traceback": tb}
                 self._update_state_file(ctx)
+                ctx.events.emit(
+                    "run.lifecycle",
+                    {
+                        "phase": "ended",
+                        "run_id": ctx.run_id,
+                        "status": "failed",
+                    },
+                )
                 self._flush_events(ctx)
             print(colored(f"运行异常：{exc}", "red"))
         else:
@@ -280,6 +324,14 @@ class Orchestrator:
                 if ctx.started_at is not None:
                     ctx.elapsed_ms = int((ctx.ended_at - ctx.started_at) * 1000)
                 self._update_state_file(ctx)
+                ctx.events.emit(
+                    "run.lifecycle",
+                    {
+                        "phase": "ended",
+                        "run_id": ctx.run_id,
+                        "status": "succeeded",
+                    },
+                )
             self._flush_events(ctx)
 
     def rollback(self) -> None:
@@ -557,6 +609,7 @@ class Orchestrator:
             "steps_done": done_steps,
             "steps_total": total_steps,
             "elapsed_ms": getattr(ctx, "elapsed_ms", None),
+            "last_error": getattr(ctx, "last_error", None),
         }
 
         try:
