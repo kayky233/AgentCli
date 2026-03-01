@@ -1089,7 +1089,7 @@
       feedback.className = "";
 
       try {
-        const resp = await fetch(window.location.origin + "/task", {
+        const resp = await fetch(window.location.origin + "/api/runs", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
