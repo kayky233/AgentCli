@@ -69,6 +69,7 @@ class Orchestrator:
 
         try:
             # PLAN: generate structured requirements spec (if LLM available)
+            print("--- [DEBUG] Orchestrator is calling PLAN stage ---")
             pipeline.run_stage(Stage.PLAN, ctx)
 
             pipeline.run_stage(Stage.PREPARE, ctx)
