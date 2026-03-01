@@ -229,6 +229,17 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
+    .connection-indicator {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-left: 8px;
+    }
+    .connection-indicator.ok {
+      color: #22c55e;
+    }
+    .connection-indicator.err {
+      color: #f97316;
+    }
     .tab-btn {
       padding: 4px 8px;
       border-radius: 4px;
@@ -366,6 +377,7 @@
     <div class="meta-item" style="flex: 2 1 360px;">
       <span class="label">Run Detail</span>
       <span class="value" id="run-detail-title">-</span>
+      <span id="conn-indicator" class="connection-indicator">SSE: idle</span>
       <div class="run-header-row">
         <div class="run-header-main">
           <span id="run-header-status" class="run-badge status-queued">-</span>
@@ -485,6 +497,8 @@
   <script>
     let runs = [];
     let selectedRunId = null;
+    let sse = null;
+    let sseConnected = false;
 
     const STAGES_ORDER = [
       "PLAN",
@@ -582,6 +596,7 @@
         item.onclick = () => {
           selectedRunId = run.id;
           document.getElementById("run-detail-title").textContent = run.id;
+          setupSSE();
           renderRunsList();
         };
 
@@ -633,6 +648,18 @@
         renderState(data);
       } catch (e) {
         console.error("Failed to fetch state", e);
+      }
+    }
+
+    function updateConnectionIndicator() {
+      const el = document.getElementById("conn-indicator");
+      if (!el) return;
+      if (sseConnected) {
+        el.textContent = "SSE: connected";
+        el.className = "connection-indicator ok";
+      } else {
+        el.textContent = "SSE: polling fallback";
+        el.className = "connection-indicator err";
       }
     }
 
@@ -850,6 +877,7 @@
         if (!selectedRunId) {
           selectedRunId = state.run_id;
           document.getElementById("run-detail-title").textContent = state.run_id;
+          setupSSE();
         }
         renderRunsList();
         const selected = runs.find((r) => r.id === selectedRunId) || entry;
@@ -864,6 +892,51 @@
 
       window.__latestEvents = state.events_tail || [];
       renderLogs();
+    }
+
+    function handleSSEMessage(evt) {
+      try {
+        const data = evt.data ? JSON.parse(evt.data) : null;
+        if (!data) return;
+        // For now we just let /state polling handle re-render of logs/stages.
+        // SSE is mainly used to improve latency and connection status.
+        // Could extend to push incremental updates here.
+      } catch {
+        // ignore parse errors
+      }
+    }
+
+    function setupSSE() {
+      if (!selectedRunId) {
+        return;
+      }
+      if (sse) {
+        sse.close();
+        sse = null;
+      }
+      try {
+        const url = `/api/runs/${encodeURIComponent(selectedRunId)}/events`;
+        sse = new EventSource(url);
+      } catch (e) {
+        console.warn("Failed to create EventSource", e);
+        sseConnected = false;
+        updateConnectionIndicator();
+        return;
+      }
+
+      sse.onopen = () => {
+        sseConnected = true;
+        updateConnectionIndicator();
+      };
+      sse.onerror = () => {
+        sseConnected = false;
+        updateConnectionIndicator();
+        // Let browser retry; we still keep polling as fallback.
+      };
+      sse.addEventListener("log", handleSSEMessage);
+      sse.addEventListener("stage_start", handleSSEMessage);
+      sse.addEventListener("stage_end", handleSSEMessage);
+      sse.addEventListener("run_end", handleSSEMessage);
     }
 
     function renderLogs() {
@@ -954,6 +1027,9 @@
         input.value = "";
         selectedRunId = runId;
         document.getElementById("run-detail-title").textContent = runId;
+
+        // (Re)connect SSE for this run.
+        setupSSE();
 
         // Optimistically insert or update the run in the local list.
         const existingIndex = runs.findIndex((r) => r.id === runId);
@@ -1050,6 +1126,7 @@
 
       fetchState();
       setInterval(fetchState, 1000);
+      updateConnectionIndicator();
     });
   </script>
 </body>

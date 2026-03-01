@@ -1,11 +1,15 @@
 from pathlib import Path
 import json
 from datetime import datetime
+from typing import Dict, Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, StreamingResponse
 
 app = FastAPI()
+
+# In-memory event buffers keyed by run_id for simple SSE streaming.
+EVENT_STREAMS: Dict[str, list[Dict[str, Any]]] = {}
 
 
 @app.get("/state")
@@ -46,6 +50,83 @@ def index():
     if not index_path.exists():
         return HTMLResponse("<html><body><h1>agent_state dashboard missing index.html</h1></body></html>")
     return FileResponse(index_path)
+
+
+@app.get("/api/runs/{run_id}/events")
+def stream_run_events(run_id: str):
+    """
+    Very simple SSE endpoint that streams events for a given run_id.
+
+    It reads agent_state.json periodically and emits synthesized events
+    whenever the underlying state changes (log snapshot & stage updates).
+    """
+    state_path = Path("agent_state.json")
+
+    def gen():
+        import time as _time
+
+        last_sent = {
+            "events_len": 0,
+            "stages": {},
+            "status": None,
+        }
+        while True:
+            if not state_path.exists():
+                _time.sleep(1.0)
+                continue
+            try:
+                raw = state_path.read_text(encoding="utf-8")
+                state = json.loads(raw)
+            except Exception:
+                _time.sleep(1.0)
+                continue
+
+            # Only stream for matching run_id, if provided in state.
+            if state.get("run_id") not in (None, "", run_id):
+                _time.sleep(1.0)
+                continue
+
+            # Logs: treat events_tail as log events.
+            events = state.get("events_tail") or []
+            ev_len = len(events)
+            if ev_len > last_sent["events_len"]:
+                new_events = events[last_sent["events_len"] :]
+                last_sent["events_len"] = ev_len
+                for ev in new_events:
+                    payload = json.dumps(ev, ensure_ascii=False)
+                    yield f"event: log\ndata: {payload}\n\n"
+
+            # Stage state changes.
+            for st in state.get("stages") or []:
+                name = st.get("name")
+                status = st.get("status")
+                if not name:
+                    continue
+                key = f"{name}"
+                prev_status = last_sent["stages"].get(key)
+                if prev_status != status:
+                    last_sent["stages"][key] = status
+                    ev_type = "stage_start" if status == "running" else "stage_end"
+                    payload = json.dumps(st, ensure_ascii=False)
+                    yield f"event: {ev_type}\ndata: {payload}\n\n"
+
+            # Run end
+            status = state.get("status")
+            if status in ("succeeded", "failed") and last_sent["status"] != status:
+                last_sent["status"] = status
+                payload = json.dumps(
+                    {
+                        "run_id": state.get("run_id"),
+                        "status": status,
+                        "elapsed_ms": state.get("elapsed_ms"),
+                    },
+                    ensure_ascii=False,
+                )
+                yield f"event: run_end\ndata: {payload}\n\n"
+
+            _time.sleep(1.0)
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @app.post("/task")
