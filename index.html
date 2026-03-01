@@ -642,7 +642,8 @@
 
     async function fetchState() {
       try {
-        const resp = await fetch(window.location.origin + "/state?_=" + Date.now());
+        const query = selectedRunId ? (`?run_id=${encodeURIComponent(selectedRunId)}&_=${Date.now()}`) : (`?_=${Date.now()}`);
+        const resp = await fetch(window.location.origin + "/state" + query);
         if (!resp.ok) {
           throw new Error("HTTP " + resp.status);
         }

@@ -17,11 +17,26 @@ RUN_QUEUE: "asyncio.Queue[str]" = asyncio.Queue()
 
 
 @app.get("/state")
-def get_state():
+def get_state(run_id: str | None = None):
     """
-    Return the current agent_state.json contents, or a minimal default if missing.
-    Also refresh an in-memory cache keyed by run_id for /api/runs/{run_id}.
+    Return the current state snapshot.
+
+    Priority:
+    1) If run_id is provided and exists in RUN_STATE_CACHE, return that run's state.
+    2) If no run_id, return the most recently updated run from RUN_STATE_CACHE (by insertion order).
+    3) If cache is empty, fall back to reading agent_state.json from disk.
     """
+    # 1) Explicit run_id in cache
+    if run_id and run_id in RUN_STATE_CACHE:
+        return JSONResponse(content=RUN_STATE_CACHE[run_id])
+
+    # 2) Latest run from cache (Python 3.7+ dict preserves insertion order)
+    if not run_id and RUN_STATE_CACHE:
+        # Take the last inserted run_id
+        last_run_id = next(reversed(RUN_STATE_CACHE.keys()))
+        return JSONResponse(content=RUN_STATE_CACHE[last_run_id])
+
+    # 3) Fallback: read agent_state.json
     state_path = Path("agent_state.json")
     if not state_path.exists():
         return JSONResponse(
@@ -40,9 +55,9 @@ def get_state():
     try:
         raw = state_path.read_text(encoding="utf-8")
         state = json.loads(raw)
-        run_id = state.get("run_id")
-        if run_id:
-            RUN_STATE_CACHE[run_id] = state
+        run_id_disk = state.get("run_id")
+        if run_id_disk:
+            RUN_STATE_CACHE[run_id_disk] = state
         return JSONResponse(content=state)
     except Exception:
         return JSONResponse(
@@ -122,12 +137,11 @@ async def debug_queue():
 @app.get("/api/runs/{run_id}/events")
 def stream_run_events(run_id: str):
     """
-    Very simple SSE endpoint that streams events for a given run_id.
+    SSE endpoint that streams events for a given run_id based on RUN_STATE_CACHE.
 
-    It reads agent_state.json periodically and emits synthesized events
-    whenever the underlying state changes (log snapshot & stage updates).
+    It periodically snapshots RUN_STATE_CACHE[run_id] and emits synthesized
+    events whenever logs, stages, or run status change.
     """
-    state_path = Path("agent_state.json")
 
     def gen():
         import time as _time
@@ -138,18 +152,8 @@ def stream_run_events(run_id: str):
             "status": None,
         }
         while True:
-            if not state_path.exists():
-                _time.sleep(1.0)
-                continue
-            try:
-                raw = state_path.read_text(encoding="utf-8")
-                state = json.loads(raw)
-            except Exception:
-                _time.sleep(1.0)
-                continue
-
-            # Only stream for matching run_id, if provided in state.
-            if state.get("run_id") not in (None, "", run_id):
+            state = RUN_STATE_CACHE.get(run_id)
+            if not state:
                 _time.sleep(1.0)
                 continue
 
@@ -252,15 +256,24 @@ async def create_run(request: Request):
     run_id = datetime.utcnow().strftime("%Y%m%d%H%M%S")
 
     # Initialize a minimal state snapshot for this run as queued.
+    stages = [
+        {"name": "PLAN", "status": "pending", "message": "", "started_at": None, "ended_at": None},
+        {"name": "GATHER", "status": "pending", "message": "", "started_at": None, "ended_at": None},
+        {"name": "EDIT", "status": "pending", "message": "", "started_at": None, "ended_at": None},
+        {"name": "APPLY", "status": "pending", "message": "", "started_at": None, "ended_at": None},
+        {"name": "PREPARE", "status": "pending", "message": "", "started_at": None, "ended_at": None},
+        {"name": "VERIFY_BUILD", "status": "pending", "message": "", "started_at": None, "ended_at": None},
+        {"name": "VERIFY_TEST", "status": "pending", "message": "", "started_at": None, "ended_at": None},
+    ]
     RUN_STATE_CACHE[run_id] = {
         "run_id": run_id,
         "task": task,
         "status": "queued",
         "current_stage": None,
         "steps_done": 0,
-        "steps_total": 0,
+        "steps_total": len(stages),
         "elapsed_ms": None,
-        "stages": [],
+        "stages": stages,
         "last_error": None,
         "events_tail": [],
     }
@@ -292,13 +305,19 @@ async def worker_loop():
             continue
 
         start_ts = _time.time()
+        # Mark run as running and start first stage in the simplified demo pipeline.
         state["status"] = "running"
         state["current_stage"] = "PLAN"
-        state["stages"] = [
-            {"name": "PLAN", "status": "running", "message": "", "started_at": start_ts, "ended_at": None},
-        ]
-        state["steps_total"] = 1
+        # Ensure stages list exists with full pipeline; first stage -> running
+        stages = state.get("stages") or []
+        now = start_ts
+        for st in stages:
+            if st.get("name") == "PLAN":
+                st["status"] = "running"
+                st["started_at"] = now
+        state["stages"] = stages
         state["steps_done"] = 0
+        state["steps_total"] = len(stages)
         RUN_STATE_CACHE[run_id] = state
 
         try:
@@ -311,10 +330,12 @@ async def worker_loop():
 
             await _simulate_pipeline()
 
-            # Mark stage completed
+            # Mark PLAN as completed
             end_ts = _time.time()
-            state["stages"][0]["status"] = "succeeded"
-            state["stages"][0]["ended_at"] = end_ts
+            for st in state["stages"]:
+                if st.get("name") == "PLAN":
+                    st["status"] = "succeeded"
+                    st["ended_at"] = end_ts
             state["steps_done"] = 1
             state["status"] = "succeeded"
             state["elapsed_ms"] = int((end_ts - start_ts) * 1000)
