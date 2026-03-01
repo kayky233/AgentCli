@@ -51,7 +51,7 @@ class EnvAgent:
 
         # 强力 Python 识别：目录下存在 requirements.txt 或任意 .py 文件时，直接走 Python 策略
         requirements_path = ws.get("path")
-        workspace_path = Path(requirements_path) if requirements_path else workspace
+        workspace_path = Path(requirements_path) if requirements_path else req.workspace
         has_requirements = ws.get("has_requirements_txt")
         has_any_py = any(p.suffix == ".py" for p in workspace_path.glob("*.py"))
         if has_requirements or has_any_py:
