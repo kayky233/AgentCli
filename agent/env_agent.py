@@ -49,6 +49,23 @@ class EnvAgent:
             or ws.get("has_main_py")
         ) and not ws.get("has_makefile")
 
+        # 强力 Python 识别：目录下存在 requirements.txt 或任意 .py 文件时，直接走 Python 策略
+        requirements_path = ws.get("path")
+        workspace_path = Path(requirements_path) if requirements_path else workspace
+        has_requirements = ws.get("has_requirements_txt")
+        has_any_py = any(p.suffix == ".py" for p in workspace_path.glob("*.py"))
+        if has_requirements or has_any_py:
+            build_cmd = "pip install -r requirements.txt" if has_requirements else "pip install ."
+            test_cmd = "pytest"
+            return self._decision(
+                plat,
+                "python",
+                build_cmd,
+                test_cmd,
+                det,
+                note="Detected Python project via requirements.txt or .py files",
+            )
+
         # overrides make_cmd（仅对 make 策略有意义）
         if req.override_make_cmd and not is_python_project:
             if self._can_execute(req.override_make_cmd):
