@@ -123,7 +123,10 @@ class Orchestrator:
                 self._update_state_file(ctx)
 
                 # PREPARE: environment decision AFTER code is materialized on disk
+                ctx.current_stage = Stage.PREPARE.name
+                self._update_state_file(ctx)
                 pipeline.run_stage(Stage.PREPARE, ctx)
+                self._update_state_file(ctx)
                 if not ctx.env_decision or ctx.env_decision.get("strategy") == "error":
                     print(colored("环境决策失败，无法继续。", "red"))
                     self._flush_events(ctx)
