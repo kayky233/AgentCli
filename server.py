@@ -134,6 +134,7 @@ def get_run(run_id: str):
         "elapsed_ms": state.get("elapsed_ms"),
         "stages": state.get("stages") or [],
         "last_error": state.get("last_error"),
+        "final_output": state.get("final_output"),
     }
     return JSONResponse(content=resp)
 
@@ -265,6 +266,7 @@ async def add_task(request: Request):
         "stages": stages,
         "last_error": None,
         "events_tail": [],
+        "final_output": None,
     }
     await RUN_QUEUE.put(run_id)
 
@@ -313,6 +315,7 @@ async def create_run(request: Request):
         "stages": stages,
         "last_error": None,
         "events_tail": [],
+        "final_output": None,
     }
 
     # Enqueue run_id for the worker loop.
@@ -405,6 +408,22 @@ async def worker_loop():
             end_ts = _time.time()
             state["status"] = "succeeded"
             state["elapsed_ms"] = int((end_ts - start_ts) * 1000)
+            # Set a simple final_output summary for the demo worker.
+            state["final_output"] = {
+                "answer": f"Run {run_id} completed successfully.",
+                "summary": f"All {len(STAGES_ORDER)} stages finished in {state['elapsed_ms']} ms.",
+            }
+            # Append a final event so clients can see completion in logs.
+            events = state.get("events_tail") or []
+            events.append(
+                {
+                    "type": "final",
+                    "level": "info",
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "payload": state["final_output"],
+                }
+            )
+            state["events_tail"] = events[-50:]
             RUN_STATE_CACHE[run_id] = state
         except Exception:
             end_ts = _time.time()
