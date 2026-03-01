@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List
 
 from ..framework.agent_types import AgentResult, Stage
@@ -113,7 +114,25 @@ class RequirementsAgentPlugin:
             return AgentResult(status="warn", outputs={"error": err})
 
         ctx.requirements = data
-        ctx.save_json("requirements", data)
+
+        # Save requirements.json into isolated target_workspace under repo_root
+        repo_root = getattr(ctx, "repo_root", None)
+        if repo_root is not None:
+            workspace = Path(repo_root) / "target_workspace"
+            try:
+                workspace.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            try:
+                req_path = workspace / "requirements.json"
+                with req_path.open("w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+            except Exception:
+                # Fallback to original behavior if direct file write fails
+                ctx.save_json("requirements", data)
+        else:
+            # No repo_root on ctx; fall back to original behavior
+            ctx.save_json("requirements", data)
         ctx.events.emit(
             "requirements.generated",
             {

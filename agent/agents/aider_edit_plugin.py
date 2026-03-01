@@ -149,8 +149,14 @@ class AiderEditPlugin:
         return files
 
     def _resolve_workdir(self, ctx, repo_root: Path) -> Path:
-        # Always use repo_root as working directory to avoid being stuck in subdirs
-        return Path(repo_root)
+        # Use an isolated workspace under repo_root to avoid modifying the agent framework itself
+        workspace = Path(repo_root) / "target_workspace"
+        try:
+            workspace.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # Fallback: still try to use the directory even if mkdir hit a race or permission issue
+            pass
+        return workspace
 
     def _build_aider_command(self, ctx, task_text: str, files: List[str], workdir: Path) -> List[str]:
         cmd: List[str] = shlex.split(self.aider_cmd)
@@ -198,14 +204,14 @@ class AiderEditPlugin:
                     continue
                 cmd.append(part)
 
-        # Auto-include requirements.json if present in current working directory
+        # Auto-include requirements.json if present in isolated workspace
         req_path = workdir / "requirements.json"
         if req_path.is_file():
             req_str = str(req_path.relative_to(workdir))
             if req_str not in files:
                 files.append(req_str)
 
-        # Auto-include all .py files under workdir (avoid from-scratch rewrites)
+        # Auto-include all .py files under the isolated workspace only
         try:
             py_files: Set[str] = set()
             for p in workdir.rglob("*.py"):
@@ -267,6 +273,14 @@ class AiderEditPlugin:
                 summary = result.get("summary", "") if isinstance(result, dict) else getattr(result, "summary", "")
             except Exception:
                 summary = ""
+            # If log is a .log file path, read its contents for richer context
+            if isinstance(log, str) and log.endswith(".log"):
+                try:
+                    with open(log, "r", encoding="utf-8", errors="ignore") as f:
+                        log = f.read()
+                except Exception:
+                    # Fall back to the path string if we cannot read the file
+                    pass
             log_snip = truncate(str(log), self.max_log_chars // 2)
             summary_snip = truncate(str(summary), self.max_log_chars // 2)
             return (
