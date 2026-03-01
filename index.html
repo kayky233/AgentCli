@@ -358,12 +358,8 @@
   <h1>Agent Live Dashboard</h1>
   <div class="meta">
     <div class="meta-item">
-      <span class="label">Iteration</span>
-      <span class="value" id="iteration">-</span>
-    </div>
-    <div class="meta-item">
       <span class="label">Stage</span>
-      <span class="value" id="stage">-</span>
+      <span class="value" id="top-stage">-</span>
     </div>
   </div>
   <div id="task"></div>
@@ -547,6 +543,7 @@
     function updateRunHeader(run) {
       const statusEl = document.getElementById("run-header-status");
       const stageEl = document.getElementById("run-header-stage");
+      const topStageEl = document.getElementById("top-stage");
       const stepsDoneEl = document.getElementById("run-header-steps-done");
       const stepsTotalEl = document.getElementById("run-header-steps-total");
       const elapsedEl = document.getElementById("run-header-elapsed");
@@ -557,6 +554,7 @@
         statusEl.textContent = "-";
         statusEl.className = "run-badge status-queued";
         stageEl.textContent = "-";
+        if (topStageEl) topStageEl.textContent = "-";
         stepsDoneEl.textContent = "0";
         stepsTotalEl.textContent = "0";
         elapsedEl.textContent = "-";
@@ -570,6 +568,7 @@
       statusEl.className = "run-badge status-" + status;
 
       stageEl.textContent = run.current_stage || "-";
+      if (topStageEl) topStageEl.textContent = run.current_stage || "-";
 
       const stepsDone = run.steps_done != null ? run.steps_done : computeSteps(run).done;
       const stepsTotal = run.steps_total != null ? run.steps_total : computeSteps(run).total;
@@ -646,7 +645,7 @@
     }
 
     async function fetchState() {
-      // Lightweight call used only for top bar (iteration / stage / task).
+      // Lightweight call used only for top bar task text.
       try {
         const resp = await fetch(window.location.origin + "/state?_=" + Date.now());
         if (!resp.ok) {
@@ -966,11 +965,7 @@
     }
 
     function renderState(state) {
-      // Only update top bar info from /state; run list & detail are driven by /api/runs polling/SSE.
-      document.getElementById("iteration").textContent =
-        state.iteration != null ? state.iteration : "-";
-      document.getElementById("stage").textContent =
-        state.current_stage || "-";
+      // Only update task text & logs from /state; stage comes from selected run detail.
       document.getElementById("task").textContent =
         state.task ? ("Task: " + state.task) : "";
 
