@@ -24,7 +24,19 @@ class BuildPlugin:
         if not build_cmd:
             ctx.events.emit("build.result", {"status": "fail", "error": "no build command"})
             return AgentResult(status="fail")
-        res = self.agent.run(ctx, build_cmd, cwd=ctx.workspace)
+
+        # Prefer target_workspace under the repo root if it exists, otherwise fall back to ctx.workspace.
+        repo_root = getattr(ctx, "repo_root", None)
+        if repo_root is not None:
+            tw = Path(repo_root) / "target_workspace"
+            if tw.is_dir():
+                cwd = tw
+            else:
+                cwd = ctx.workspace
+        else:
+            cwd = ctx.workspace
+
+        res = self.agent.run(ctx, build_cmd, cwd=cwd)
         ctx.last_build_result = res
         ctx.save_json(f"build_{ctx.iteration}", res)
         ctx.events.emit("build.result", {"status": "ok" if res["success"] else "fail", "summary": res.get("summary", [])})

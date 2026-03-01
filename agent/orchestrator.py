@@ -86,6 +86,9 @@ class Orchestrator:
             iteration = 0
             while iteration < self.max_iters:
                 iteration += 1
+                if iteration >= 3:
+                    print(colored("达到最大基础设施重试次数（3），终止迭代以避免无限循环。", "red"))
+                    break
                 ctx.iteration = iteration
 
                 pipeline.run_stage(Stage.GATHER, ctx, request=self._collect_hints(ctx))
