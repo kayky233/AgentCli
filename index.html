@@ -44,11 +44,12 @@
       background: #0b1120;
       border-radius: 6px;
       padding: 8px;
-      max-height: 400px;
+      max-height: 250px;
       overflow-y: auto;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       font-size: 12px;
       border: 1px solid #1f2937;
+      margin-bottom: 16px;
     }
     .log-line {
       padding: 2px 0;
@@ -69,6 +70,60 @@
     .warn .type {
       color: #eab308;
     }
+    .chat-container {
+      margin-top: 8px;
+      padding: 12px;
+      border-radius: 6px;
+      background: #020617;
+      border: 1px solid #1f2937;
+    }
+    .chat-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #e5e7eb;
+    }
+    .chat-input-row {
+      display: flex;
+      gap: 8px;
+    }
+    #task-input {
+      flex: 1;
+      padding: 8px;
+      border-radius: 4px;
+      border: 1px solid #4b5563;
+      background: #020617;
+      color: #e5e7eb;
+      font-size: 13px;
+    }
+    #task-input::placeholder {
+      color: #6b7280;
+    }
+    #send-btn {
+      padding: 8px 14px;
+      border-radius: 4px;
+      border: none;
+      background: #2563eb;
+      color: #f9fafb;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #send-btn:disabled {
+      background: #4b5563;
+      cursor: not-allowed;
+    }
+    #feedback {
+      margin-top: 6px;
+      font-size: 12px;
+      min-height: 16px;
+    }
+    #feedback.ok {
+      color: #22c55e;
+    }
+    #feedback.err {
+      color: #f97316;
+    }
   </style>
 </head>
 <body>
@@ -85,6 +140,19 @@
   </div>
   <div id="task"></div>
   <div id="logs"></div>
+
+  <div class="chat-container">
+    <div class="chat-title">Submit a new task</div>
+    <div class="chat-input-row">
+      <input
+        id="task-input"
+        type="text"
+        placeholder="Describe what you want the agent to do…"
+      />
+      <button id="send-btn">Send</button>
+    </div>
+    <div id="feedback"></div>
+  </div>
 
   <script>
     async function fetchState() {
@@ -139,8 +207,57 @@
       logsEl.scrollTop = logsEl.scrollHeight;
     }
 
-    fetchState();
-    setInterval(fetchState, 1000);
+    async function sendTask() {
+      const input = document.getElementById("task-input");
+      const btn = document.getElementById("send-btn");
+      const feedback = document.getElementById("feedback");
+      const task = input.value.trim();
+
+      if (!task) {
+        feedback.textContent = "Please enter a task.";
+        feedback.className = "err";
+        return;
+      }
+
+      btn.disabled = true;
+      feedback.textContent = "Submitting task…";
+      feedback.className = "";
+
+      try {
+        const resp = await fetch("/task", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ task }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          throw new Error(data.error || ("HTTP " + resp.status));
+        }
+        input.value = "";
+        feedback.textContent = "Task submitted.";
+        feedback.className = "ok";
+      } catch (e) {
+        feedback.textContent = "Error submitting task: " + e.message;
+        feedback.className = "err";
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      document.getElementById("send-btn").addEventListener("click", sendTask);
+      document.getElementById("task-input").addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" && !ev.shiftKey) {
+          ev.preventDefault();
+          sendTask();
+        }
+      });
+
+      fetchState();
+      setInterval(fetchState, 1000);
+    });
   </script>
 </body>
 </html>
