@@ -8,14 +8,15 @@ from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Streamin
 
 app = FastAPI()
 
-# In-memory event buffers keyed by run_id for simple SSE streaming.
-EVENT_STREAMS: Dict[str, list[Dict[str, Any]]] = {}
+# In-memory store for simple run status querying by run_id (derived from agent_state.json).
+RUN_STATE_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 @app.get("/state")
 def get_state():
     """
     Return the current agent_state.json contents, or a minimal default if missing.
+    Also refresh an in-memory cache keyed by run_id for /api/runs/{run_id}.
     """
     state_path = Path("agent_state.json")
     if not state_path.exists():
@@ -33,7 +34,12 @@ def get_state():
             }
         )
     try:
-        return FileResponse(state_path, media_type="application/json")
+        raw = state_path.read_text(encoding="utf-8")
+        state = json.loads(raw)
+        run_id = state.get("run_id")
+        if run_id:
+            RUN_STATE_CACHE[run_id] = state
+        return JSONResponse(content=state)
     except Exception:
         return JSONResponse(
             content={"error": "failed to read state file"},
@@ -50,6 +56,55 @@ def index():
     if not index_path.exists():
         return HTMLResponse("<html><body><h1>agent_state dashboard missing index.html</h1></body></html>")
     return FileResponse(index_path)
+
+
+@app.get("/api/runs/{run_id}")
+def get_run(run_id: str):
+    """
+    Return a snapshot of a single run by run_id.
+
+    Shape:
+    {
+      "run_id": ...,
+      "status": "queued"/"running"/"succeeded"/"failed",
+      "current_stage": ...,
+      "steps_done": int,
+      "steps_total": int,
+      "elapsed_ms": int|None,
+      "stages": [ {name,status,message,started_at,ended_at}, ... ],
+      "last_error": {...} | None
+    }
+    """
+    # Prefer cached state (populated by /state polling), fallback to reading agent_state.json.
+    state = RUN_STATE_CACHE.get(run_id)
+    state_path = Path("agent_state.json")
+    if not state and state_path.exists():
+        try:
+            raw = state_path.read_text(encoding="utf-8")
+            maybe = json.loads(raw)
+            if maybe.get("run_id") == run_id:
+                state = maybe
+                RUN_STATE_CACHE[run_id] = state
+        except Exception:
+            state = None
+
+    if not state:
+        return JSONResponse(
+            content={"error": f"run {run_id} not found"},
+            status_code=404,
+        )
+
+    resp = {
+        "run_id": state.get("run_id"),
+        "status": state.get("status") or "queued",
+        "current_stage": state.get("current_stage"),
+        "steps_done": state.get("steps_done", 0),
+        "steps_total": state.get("steps_total", 0),
+        "elapsed_ms": state.get("elapsed_ms"),
+        "stages": state.get("stages") or [],
+        "last_error": state.get("last_error"),
+    }
+    return JSONResponse(content=resp)
 
 
 @app.get("/api/runs/{run_id}/events")

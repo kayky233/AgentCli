@@ -499,6 +499,7 @@
     let selectedRunId = null;
     let sse = null;
     let sseConnected = false;
+    let runPollIntervalId = null;
 
     const STAGES_ORDER = [
       "PLAN",
@@ -597,6 +598,7 @@
           selectedRunId = run.id;
           document.getElementById("run-detail-title").textContent = run.id;
           setupSSE();
+          startRunPolling();
           renderRunsList();
         };
 
@@ -851,6 +853,84 @@
       });
     }
 
+    async function fetchRunDetailOnce() {
+      if (!selectedRunId) return;
+      try {
+        const resp = await fetch(`${window.location.origin}/api/runs/${encodeURIComponent(selectedRunId)}`);
+        if (!resp.ok) {
+          // do not throw, just log; UI falls back to /state info
+          console.warn("Failed to fetch run detail", resp.status);
+          return;
+        }
+        const run = await resp.json();
+        // Update runs list entry
+        const idx = runs.findIndex((r) => r.id === run.run_id);
+        const entry = {
+          id: run.run_id,
+          status: run.status,
+          current_stage: run.current_stage,
+          elapsed_ms: run.elapsed_ms,
+        };
+        if (idx >= 0) {
+          runs[idx] = { ...runs[idx], ...entry };
+        } else {
+          runs.unshift(entry);
+        }
+        renderRunsList();
+        updateRunHeader(entry);
+      } catch (e) {
+        console.warn("Error fetching run detail", e);
+      }
+    }
+
+    function startRunPolling() {
+      if (!selectedRunId) return;
+      if (runPollIntervalId) {
+        clearInterval(runPollIntervalId);
+        runPollIntervalId = null;
+      }
+      // initial fetch immediately
+      fetchRunDetailOnce();
+      runPollIntervalId = setInterval(async () => {
+        if (!selectedRunId) {
+          clearInterval(runPollIntervalId);
+          runPollIntervalId = null;
+          return;
+        }
+        try {
+          const resp = await fetch(`${window.location.origin}/api/runs/${encodeURIComponent(selectedRunId)}`);
+          if (!resp.ok) {
+            if (resp.status === 404) {
+              clearInterval(runPollIntervalId);
+              runPollIntervalId = null;
+            }
+            return;
+          }
+          const run = await resp.json();
+          const idx = runs.findIndex((r) => r.id === run.run_id);
+          const entry = {
+            id: run.run_id,
+            status: run.status,
+            current_stage: run.current_stage,
+            elapsed_ms: run.elapsed_ms,
+          };
+          if (idx >= 0) {
+            runs[idx] = { ...runs[idx], ...entry };
+          } else {
+            runs.unshift(entry);
+          }
+          renderRunsList();
+          updateRunHeader(entry);
+          if (run.status === "succeeded" || run.status === "failed") {
+            clearInterval(runPollIntervalId);
+            runPollIntervalId = null;
+          }
+        } catch (e) {
+          console.warn("Error polling run detail", e);
+        }
+      }, 1000);
+    }
+
     function renderState(state) {
       document.getElementById("iteration").textContent =
         state.iteration != null ? state.iteration : "-";
@@ -878,6 +958,7 @@
           selectedRunId = state.run_id;
           document.getElementById("run-detail-title").textContent = state.run_id;
           setupSSE();
+          startRunPolling();
         }
         renderRunsList();
         const selected = runs.find((r) => r.id === selectedRunId) || entry;
@@ -1030,6 +1111,9 @@
 
         // (Re)connect SSE for this run.
         setupSSE();
+
+        // Start polling this run's detail.
+        startRunPolling();
 
         // Optimistically insert or update the run in the local list.
         const existingIndex = runs.findIndex((r) => r.id === runId);
