@@ -640,7 +640,7 @@
 
     async function fetchState() {
       try {
-        const resp = await fetch("/state?_=" + Date.now());
+        const resp = await fetch(window.location.origin + "/state?_=" + Date.now());
         if (!resp.ok) {
           throw new Error("HTTP " + resp.status);
         }
@@ -915,7 +915,7 @@
         sse = null;
       }
       try {
-        const url = `/api/runs/${encodeURIComponent(selectedRunId)}/events`;
+        const url = `${window.location.origin}/api/runs/${encodeURIComponent(selectedRunId)}/events`;
         sse = new EventSource(url);
       } catch (e) {
         console.warn("Failed to create EventSource", e);
@@ -1007,7 +1007,7 @@
       feedback.className = "";
 
       try {
-        const resp = await fetch("/task", {
+        const resp = await fetch(window.location.origin + "/task", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
