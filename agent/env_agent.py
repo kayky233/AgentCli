@@ -41,60 +41,29 @@ class EnvAgent:
         plat = self._detect_platform()
         det = self._detect_all(req.workspace)
 
-        # 优先识别 Python 项目：requirements.txt / setup.py / main.py 存在，且没有 Makefile
+        # 优先识别 Python 项目：requirements.txt / requirements.json / setup.py / main.py 存在，且没有 Makefile
         ws = det.get("workspace", {})
+        task_text = getattr(req, "task", "") or ""
+        task_lower = task_text.lower()
+        has_requirements_json = (req.workspace / "requirements.json").exists()
         is_python_project = (
             ws.get("has_requirements_txt")
+            or has_requirements_json
             or ws.get("has_setup_py")
             or ws.get("has_main_py")
+            or ("python" in task_lower)
         ) and not ws.get("has_makefile")
 
-        # 强力 Python 识别：目录下存在 requirements.txt 或任意 .py 文件时，直接走 Python 策略
+        # 强力 Python 识别：目录下存在 requirements.txt / requirements.json 或任意 .py 文件时，直接走 Python 策略
         requirements_path = ws.get("path")
         workspace_path = Path(requirements_path) if requirements_path else req.workspace
-        has_requirements = ws.get("has_requirements_txt")
+        has_requirements = ws.get("has_requirements_txt") or has_requirements_json
         has_any_py = any(p.suffix == ".py" for p in workspace_path.glob("*.py"))
-        has_setup_py = ws.get("has_setup_py")
-        has_pyproject = (workspace_path / "pyproject.toml").exists()
-        is_package = bool(has_setup_py or has_pyproject)
 
-        # 检测 pytest 是否可用
-        pytest_available = shutil.which("pytest") is not None
-
-        if has_requirements or has_any_py:
-            # 包项目：执行 pip install .
-            if is_package:
-                if pytest_available:
-                    build_cmd = "pip install -r requirements.txt && pip install ." if has_requirements else "pip install ."
-                    note = "Detected Python package project via setup.py/pyproject.toml (pytest available)."
-                else:
-                    # 确保安装 pytest，并在说明中提示
-                    if has_requirements:
-                        build_cmd = "pip install -r requirements.txt && pip install . && pip install pytest"
-                    else:
-                        build_cmd = "pip install . && pip install pytest"
-                    note = (
-                        "Detected Python package project via setup.py/pyproject.toml; "
-                        "pytest not found, will install pytest automatically. "
-                        "如果构建失败，请手动运行 `pip install pytest`。"
-                    )
-                test_cmd = "pytest"
-            else:
-                # 纯脚本项目：不需要构建，但仍使用 pytest 作为统一测试命令
-                if pytest_available:
-                    build_cmd = "echo 'No build needed'"
-                    note = (
-                        "Detected Python script project (no setup.py/pyproject.toml); "
-                        "using pytest as test command."
-                    )
-                else:
-                    build_cmd = "pip install pytest"
-                    note = (
-                        "Detected Python script project (no setup.py/pyproject.toml); "
-                        "pytest not found, installing pytest for tests. "
-                        "如果构建失败，请手动运行 `pip install pytest`。"
-                    )
-                test_cmd = "pytest"
+        if has_requirements or has_any_py or ("python" in task_lower):
+            build_cmd = 'echo "No build needed"'
+            test_cmd = "pytest"
+            note = "Detected Python project; using no-op build and pytest as test command."
 
             return self._decision(
                 plat,
