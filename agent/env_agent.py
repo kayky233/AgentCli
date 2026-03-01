@@ -38,8 +38,10 @@ class EnvAgent:
         pass
 
     def decide(self, req: EnvRequest) -> EnvDecision:
+        print(f'[DEBUG] EnvAgent scanning workspace: {req.workspace}')
         plat = self._detect_platform()
         det = self._detect_all(req.workspace)
+        print(f'[DEBUG] Environment detection result: {det}')
 
         # 优先识别 Python 项目：requirements.txt / requirements.json / setup.py / main.py 存在，且没有 Makefile
         ws = det.get("workspace", {})
@@ -53,6 +55,10 @@ class EnvAgent:
             or ws.get("has_main_py")
             or ("python" in task_lower)
         ) and not ws.get("has_makefile")
+
+        # 强制线索：如果存在 calculator.py，则一定视为 Python 项目
+        if (req.workspace / "calculator.py").exists():
+            is_python_project = True
 
         if is_python_project:
             build_cmd = 'echo "No build needed"'
