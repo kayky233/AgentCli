@@ -131,6 +131,56 @@
     .warn .type {
       color: #eab308;
     }
+    .run-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .run-header-main {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      font-size: 12px;
+    }
+    .run-header-main .run-badge {
+      margin-right: 4px;
+    }
+    .run-header-metric {
+      color: #9ca3af;
+    }
+    .run-header-metric strong {
+      color: #e5e7eb;
+      margin-left: 2px;
+    }
+    .run-header-actions {
+      display: flex;
+      gap: 6px;
+    }
+    .run-header-btn {
+      padding: 4px 10px;
+      border-radius: 4px;
+      border: 1px solid #4b5563;
+      background: #020617;
+      color: #e5e7eb;
+      font-size: 11px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .run-header-btn.cancel {
+      border-color: #f97316;
+      color: #fed7aa;
+    }
+    .run-header-btn.retry {
+      border-color: #22c55e;
+      color: #bbf7d0;
+    }
+    .run-header-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
     .chat-container {
       margin-top: 8px;
       padding: 12px;
@@ -210,6 +260,27 @@
     <div class="meta-item" style="flex: 2 1 360px;">
       <span class="label">Run Detail</span>
       <span class="value" id="run-detail-title">-</span>
+      <div class="run-header-row">
+        <div class="run-header-main">
+          <span id="run-header-status" class="run-badge status-queued">-</span>
+          <span class="run-header-metric">
+            Stage:
+            <strong id="run-header-stage">-</strong>
+          </span>
+          <span class="run-header-metric">
+            Steps:
+            <strong><span id="run-header-steps-done">0</span>/<span id="run-header-steps-total">0</span></strong>
+          </span>
+          <span class="run-header-metric">
+            Elapsed:
+            <strong id="run-header-elapsed">-</strong>
+          </span>
+        </div>
+        <div class="run-header-actions">
+          <button id="run-cancel-btn" class="run-header-btn cancel" disabled>Cancel</button>
+          <button id="run-retry-btn" class="run-header-btn retry" disabled>Retry</button>
+        </div>
+      </div>
       <div id="run-tabs" style="margin-top: 6px;">
         <button data-tab="progress" class="tab-btn active">Progress</button>
         <button data-tab="logs" class="tab-btn">Logs</button>
@@ -237,6 +308,62 @@
   <script>
     let runs = [];
     let selectedRunId = null;
+
+    const STAGES_ORDER = [
+      "PLAN",
+      "GATHER",
+      "EDIT",
+      "APPLY",
+      "PREPARE",
+      "VERIFY_BUILD",
+      "VERIFY_TEST",
+    ];
+
+    function computeSteps(runOrState) {
+      const current = (runOrState.current_stage || "").toUpperCase();
+      const total = STAGES_ORDER.length;
+      const idx = STAGES_ORDER.indexOf(current);
+      const done = idx < 0 ? 0 : idx;
+      return { done, total };
+    }
+
+    function updateRunHeader(run) {
+      const statusEl = document.getElementById("run-header-status");
+      const stageEl = document.getElementById("run-header-stage");
+      const stepsDoneEl = document.getElementById("run-header-steps-done");
+      const stepsTotalEl = document.getElementById("run-header-steps-total");
+      const elapsedEl = document.getElementById("run-header-elapsed");
+      const cancelBtn = document.getElementById("run-cancel-btn");
+      const retryBtn = document.getElementById("run-retry-btn");
+
+      if (!run) {
+        statusEl.textContent = "-";
+        statusEl.className = "run-badge status-queued";
+        stageEl.textContent = "-";
+        stepsDoneEl.textContent = "0";
+        stepsTotalEl.textContent = "0";
+        elapsedEl.textContent = "-";
+        cancelBtn.disabled = true;
+        retryBtn.disabled = true;
+        return;
+      }
+
+      const status = (run.status || "unknown").toLowerCase();
+      statusEl.textContent = run.status || "unknown";
+      statusEl.className = "run-badge status-" + status;
+
+      stageEl.textContent = run.current_stage || "-";
+
+      const steps = computeSteps(run);
+      stepsDoneEl.textContent = String(steps.done);
+      stepsTotalEl.textContent = String(steps.total);
+
+      elapsedEl.textContent = formatElapsed(run.elapsed_ms);
+
+      const runningLike = status === "running" || status === "queued";
+      cancelBtn.disabled = !runningLike;
+      retryBtn.disabled = !(status === "failed" || status === "succeeded");
+    }
 
     function formatElapsed(ms) {
       if (ms == null) return "-";
@@ -339,6 +466,10 @@
           document.getElementById("run-detail-title").textContent = state.run_id;
         }
         renderRunsList();
+        const selected = runs.find((r) => r.id === selectedRunId) || entry;
+        updateRunHeader(selected);
+      } else {
+        updateRunHeader(null);
       }
 
       const logsEl = document.getElementById("logs");
@@ -418,6 +549,15 @@
           ev.preventDefault();
           sendTask();
         }
+      });
+
+      document.getElementById("run-cancel-btn").addEventListener("click", () => {
+        // Placeholder: wire to backend cancel API when available.
+        alert("Cancel is not implemented yet.");
+      });
+      document.getElementById("run-retry-btn").addEventListener("click", () => {
+        // Placeholder: wire to backend retry API when available.
+        alert("Retry is not implemented yet.");
       });
 
       fetchState();
