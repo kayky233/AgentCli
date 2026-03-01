@@ -567,9 +567,10 @@
 
       stageEl.textContent = run.current_stage || "-";
 
-      const steps = computeSteps(run);
-      stepsDoneEl.textContent = String(steps.done);
-      stepsTotalEl.textContent = String(steps.total);
+      const stepsDone = run.steps_done != null ? run.steps_done : computeSteps(run).done;
+      const stepsTotal = run.steps_total != null ? run.steps_total : computeSteps(run).total;
+      stepsDoneEl.textContent = String(stepsDone);
+      stepsTotalEl.textContent = String(stepsTotal);
 
       elapsedEl.textContent = formatElapsed(run.elapsed_ms);
 

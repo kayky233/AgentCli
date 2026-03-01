@@ -113,12 +113,24 @@ def get_run(run_id: str):
             status_code=404,
         )
 
+    steps_done = state.get("steps_done")
+    steps_total = state.get("steps_total")
+    # Ensure steps fields are always present and numeric.
+    try:
+        steps_done = int(steps_done)
+    except (TypeError, ValueError):
+        steps_done = 0
+    try:
+        steps_total = int(steps_total)
+    except (TypeError, ValueError):
+        steps_total = len(state.get("stages") or [])
+
     resp = {
         "run_id": state.get("run_id"),
         "status": state.get("status") or "queued",
         "current_stage": state.get("current_stage"),
-        "steps_done": state.get("steps_done", 0),
-        "steps_total": state.get("steps_total", 0),
+        "steps_done": steps_done,
+        "steps_total": steps_total,
         "elapsed_ms": state.get("elapsed_ms"),
         "stages": state.get("stages") or [],
         "last_error": state.get("last_error"),
