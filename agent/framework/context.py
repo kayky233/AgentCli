@@ -29,6 +29,9 @@ class RunContext:
     iteration: int = 0
     file_contents: Dict[str, str] = field(default_factory=dict)
     applied_files: List[str] = field(default_factory=list)
+    # Phase 1: structured artifacts for requirements-aware pipeline
+    requirements: Optional[Dict[str, Any]] = None
+    design: Optional[Dict[str, Any]] = None
 
     def save_json(self, name: str, obj: Dict[str, Any]):
         import json

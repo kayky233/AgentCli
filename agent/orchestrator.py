@@ -12,6 +12,7 @@ from .agents.reposcout_plugin import RepoScoutPlugin
 from .agents.patch_author_plugin import PatchAuthorPlugin
 from .agents.build_plugin import BuildPlugin
 from .agents.test_plugin import TestPlugin
+from .agents.requirements_plugin import RequirementsAgentPlugin
 from .llm.service import LLMService
 from .skills import ReadFileSkill, RunCommandSkill, SearchSkill, SkillRegistry
 from .utils import colored
@@ -67,6 +68,9 @@ class Orchestrator:
         pipeline = self._make_pipeline()
 
         try:
+            # PLAN: generate structured requirements spec (if LLM available)
+            pipeline.run_stage(Stage.PLAN, ctx)
+
             pipeline.run_stage(Stage.PREPARE, ctx)
             if not ctx.env_decision or ctx.env_decision.get("strategy") == "error":
                 print(colored("环境决策失败，无法继续。", "red"))
@@ -237,7 +241,11 @@ class Orchestrator:
 
     def _make_pipeline(self):
         reg = AgentRegistry()
+        # PLAN: requirements analysis
+        reg.register(Stage.PLAN, RequirementsAgentPlugin())
+        # PREPARE: environment decision
         reg.register(Stage.PREPARE, EnvAgentPlugin())
+        # GATHER / EDIT / VERIFY
         reg.register(Stage.GATHER, RepoScoutPlugin())
         reg.register(Stage.EDIT, PatchAuthorPlugin())
         reg.register(Stage.VERIFY_BUILD, BuildPlugin())
