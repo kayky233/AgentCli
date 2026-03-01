@@ -945,8 +945,36 @@
         if (!resp.ok) {
           throw new Error(data.error || ("HTTP " + resp.status));
         }
+        const runId = data.run_id || data.runId || (data.task && data.task.run_id);
+        if (!runId) {
+          throw new Error("Missing run_id in response");
+        }
+
+        // Clear input and immediately select this run in the UI.
         input.value = "";
-        feedback.textContent = "Task submitted.";
+        selectedRunId = runId;
+        document.getElementById("run-detail-title").textContent = runId;
+
+        // Optimistically insert or update the run in the local list.
+        const existingIndex = runs.findIndex((r) => r.id === runId);
+        const entry = {
+          id: runId,
+          status: "queued",
+          current_stage: null,
+          elapsed_ms: null,
+        };
+        if (existingIndex >= 0) {
+          runs[existingIndex] = { ...runs[existingIndex], ...entry };
+        } else {
+          runs.unshift(entry);
+        }
+        renderRunsList();
+        updateRunHeader(entry);
+
+        // Trigger an immediate state refresh so the detail panel loads this run.
+        fetchState();
+
+        feedback.textContent = "Task submitted and run created.";
         feedback.className = "ok";
       } catch (e) {
         feedback.textContent = "Error submitting task: " + e.message;
