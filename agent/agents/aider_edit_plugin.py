@@ -47,7 +47,7 @@ class AiderEditPlugin:
             )
 
         repo_root: Path = getattr(ctx, "repo_root", Path("."))
-        workdir = getattr(ctx, "workspace", Path("."))
+        workdir = getattr(ctx, "workspace", repo_root)
 
         cmd = self._build_aider_command(ctx, task_text, files, workdir)
         ctx.events.emit(
