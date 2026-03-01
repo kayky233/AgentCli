@@ -392,6 +392,17 @@ class Orchestrator:
             if isinstance(raw_events, list):
                 recent_events = raw_events[-50:]
 
+        # Build a minimal changes summary: list of applied files and last few apply.diff events.
+        changes_files: List[str] = list(getattr(ctx, "applied_files", []) or [])
+        changes_diffs: Dict[str, str] = {}
+        for ev in recent_events:
+            if ev.get("type") == "apply.diff":
+                payload = ev.get("payload") or {}
+                file_path = payload.get("file")
+                diff_text = payload.get("diff")
+                if isinstance(file_path, str) and isinstance(diff_text, str):
+                    changes_diffs[file_path] = diff_text
+
         def default(o: Any):
             # Fallback serializer: use string repr to avoid JSON errors.
             try:
@@ -405,7 +416,8 @@ class Orchestrator:
             "task": getattr(ctx, "task", None),
             "policy": getattr(ctx, "policy", {}),
             "options": getattr(ctx, "options", {}),
-            "applied_files": list(getattr(ctx, "applied_files", []) or []),
+            "applied_files": changes_files,
+            "changes_diffs": changes_diffs,
             "last_build_result": getattr(ctx, "last_build_result", None),
             "last_test_result": getattr(ctx, "last_test_result", None),
             "events_tail": recent_events,

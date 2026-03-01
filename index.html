@@ -425,7 +425,21 @@
         </div>
       </div>
       <div id="tab-changes" class="tab-content" style="display:none;">
-        <div style="color:#9ca3af;">Changes view coming soon.</div>
+        <div id="changes-container" style="display:flex; gap:8px;">
+          <div style="flex:1 1 40%; max-height:260px; overflow-y:auto; border:1px solid #1f2937; border-radius:6px; background:#020617; padding:6px;">
+            <div style="font-size:12px; color:#9ca3af; margin-bottom:4px;">Files</div>
+            <ul id="changes-file-list" style="list-style:none; padding-left:0; margin:0; font-size:12px;"></ul>
+          </div>
+          <div style="flex:2 1 60%; max-height:260px; overflow-y:auto; border:1px solid #1f2937; border-radius:6px; background:#020617; padding:6px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; font-size:12px; color:#9ca3af;">
+              <span id="changes-selected-file">Select a file to view diff</span>
+              <button id="changes-download-patch" style="padding:3px 8px; border-radius:4px; border:1px solid #4b5563; background:#020617; color:#e5e7eb; font-size:11px; cursor:pointer;" disabled>
+                Download patch
+              </button>
+            </div>
+            <pre id="changes-diff-view" style="margin:0; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size:12px; color:#e5e7eb; white-space:pre-wrap;"></pre>
+          </div>
+        </div>
       </div>
       <div id="tab-evidence" class="tab-content" style="display:none;">
         <div style="color:#9ca3af;">Evidence view coming soon.</div>
@@ -669,6 +683,56 @@
       });
     }
 
+    function renderChanges(state) {
+      const files = state.applied_files || [];
+      const diffs = state.changes_diffs || {};
+      const listEl = document.getElementById("changes-file-list");
+      const diffEl = document.getElementById("changes-diff-view");
+      const fileLabelEl = document.getElementById("changes-selected-file");
+      const downloadBtn = document.getElementById("changes-download-patch");
+      if (!listEl || !diffEl || !fileLabelEl || !downloadBtn) return;
+
+      listEl.innerHTML = "";
+      diffEl.textContent = "";
+      fileLabelEl.textContent = files.length ? "Select a file to view diff" : "No changed files yet.";
+      downloadBtn.disabled = true;
+      downloadBtn.onclick = null;
+
+      files.forEach((file) => {
+        const li = document.createElement("li");
+        li.textContent = file;
+        li.style.cursor = "pointer";
+        li.style.padding = "2px 4px";
+        li.style.borderRadius = "4px";
+        li.style.color = "#e5e7eb";
+        li.addEventListener("mouseenter", () => {
+          li.style.backgroundColor = "#111827";
+        });
+        li.addEventListener("mouseleave", () => {
+          li.style.backgroundColor = "transparent";
+        });
+        li.addEventListener("click", () => {
+          const diff = diffs[file] || "(no diff captured for this file)";
+          fileLabelEl.textContent = file;
+          diffEl.textContent = diff;
+          downloadBtn.disabled = false;
+          downloadBtn.onclick = () => {
+            const blob = new Blob([diff], { type: "text/plain;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            const safeName = file.replace(/[^\w.\-]/g, "_");
+            a.download = safeName + ".patch";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          };
+        });
+        listEl.appendChild(li);
+      });
+    }
+
     function renderState(state) {
       document.getElementById("iteration").textContent =
         state.iteration != null ? state.iteration : "-";
@@ -704,6 +768,7 @@
       }
 
       renderStageTimeline(state);
+      renderChanges(state);
 
       window.__latestEvents = state.events_tail || [];
       renderLogs();
