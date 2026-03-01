@@ -58,18 +58,43 @@ class EnvAgent:
         has_pyproject = (workspace_path / "pyproject.toml").exists()
         is_package = bool(has_setup_py or has_pyproject)
 
+        # 检测 pytest 是否可用
+        pytest_available = shutil.which("pytest") is not None
+
         if has_requirements or has_any_py:
             # 包项目：执行 pip install .
             if is_package:
-                build_cmd = "pip install -r requirements.txt" if has_requirements else "pip install ."
+                if pytest_available:
+                    build_cmd = "pip install -r requirements.txt && pip install ." if has_requirements else "pip install ."
+                    note = "Detected Python package project via setup.py/pyproject.toml (pytest available)."
+                else:
+                    # 确保安装 pytest，并在说明中提示
+                    if has_requirements:
+                        build_cmd = "pip install -r requirements.txt && pip install . && pip install pytest"
+                    else:
+                        build_cmd = "pip install . && pip install pytest"
+                    note = (
+                        "Detected Python package project via setup.py/pyproject.toml; "
+                        "pytest not found, will install pytest automatically. "
+                        "如果构建失败，请手动运行 `pip install pytest`。"
+                    )
                 test_cmd = "pytest"
-                note = "Detected Python package project via setup.py/pyproject.toml"
             else:
-                # 纯脚本项目：不需要构建，只做简单运行验证
-                build_cmd = "echo 'No build needed'"
-                # 使用一个简单的脚本作为验证入口
-                test_cmd = "python calculator.py --help"
-                note = "Detected Python script project (no setup.py/pyproject.toml); using simple run verification"
+                # 纯脚本项目：不需要构建，但仍使用 pytest 作为统一测试命令
+                if pytest_available:
+                    build_cmd = "echo 'No build needed'"
+                    note = (
+                        "Detected Python script project (no setup.py/pyproject.toml); "
+                        "using pytest as test command."
+                    )
+                else:
+                    build_cmd = "pip install pytest"
+                    note = (
+                        "Detected Python script project (no setup.py/pyproject.toml); "
+                        "pytest not found, installing pytest for tests. "
+                        "如果构建失败，请手动运行 `pip install pytest`。"
+                    )
+                test_cmd = "pytest"
 
             return self._decision(
                 plat,

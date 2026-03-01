@@ -206,10 +206,56 @@ class AiderEditPlugin:
                 files.append(req_str)
 
         # Strengthen the message to instruct aider to create missing files and use gpt-5.1
+        # Also append last build/test failure summaries for TDD self-healing.
+        extra_failure_context = ""
+
+        # Try ctx.last_build_result / ctx.last_test_result if available
+        last_build = getattr(ctx, "last_build_result", None)
+        last_test = getattr(ctx, "last_test_result", None)
+
+        def _format_failure(name: str, result: Any) -> str:
+            try:
+                success = result.get("success", True) if isinstance(result, dict) else getattr(result, "success", True)
+            except Exception:
+                success = True
+            if success:
+                return ""
+            try:
+                stdout = result.get("stdout", "") if isinstance(result, dict) else getattr(result, "stdout", "")
+            except Exception:
+                stdout = ""
+            try:
+                stderr = result.get("stderr", "") if isinstance(result, dict) else getattr(result, "stderr", "")
+            except Exception:
+                stderr = ""
+            stdout_snip = truncate(str(stdout), self.max_log_chars // 2)
+            stderr_snip = truncate(str(stderr), self.max_log_chars // 2)
+            return (
+                f"\n\n{name} 结果：success = False\n"
+                f"stdout 摘要（截断）：\n{stdout_snip}\n\n"
+                f"stderr 摘要（截断）：\n{stderr_snip}"
+            )
+
+        failure_sections: List[str] = []
+        if last_build is not None:
+            s = _format_failure("上次构建", last_build)
+            if s:
+                failure_sections.append(s)
+        if last_test is not None:
+            s = _format_failure("上次测试", last_test)
+            if s:
+                failure_sections.append(s)
+
+        if failure_sections:
+            extra_failure_context = (
+                "\n\n上次测试失败，请根据以下报错信息修复代码：" + "".join(failure_sections)
+            )
+
         enhanced_task = (
             f"{task_text}\n\n"
             "重要：如果需要的文件不存在，请直接创建它们，不要只尝试编辑已有文件。\n"
             "这是基于 requirements.json 的项目。如果涉及文件不存在，必须创建它们。请使用 gpt-5.1 模型进行编辑。"
+            f"{extra_failure_context}"
         )
         cmd.extend(["--message", enhanced_task])
         cmd.extend(files)
