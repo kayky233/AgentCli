@@ -72,17 +72,6 @@ class Orchestrator:
             print("--- [DEBUG] Orchestrator is calling PLAN stage ---")
             pipeline.run_stage(Stage.PLAN, ctx)
 
-            pipeline.run_stage(Stage.PREPARE, ctx)
-            if not ctx.env_decision or ctx.env_decision.get("strategy") == "error":
-                print(colored("环境决策失败，无法继续。", "red"))
-                self._flush_events(ctx)
-                return
-            self._print_env(ctx.env_decision)
-            if not auto:
-                choice = input("环境已选择，继续？(y/n): ").strip().lower()
-                if choice not in ("y", "yes", ""):
-                    return
-
             iteration = 0
             while iteration < self.max_iters:
                 iteration += 1
@@ -94,11 +83,15 @@ class Orchestrator:
                     print(colored("达到最大迭代次数（3），终止以避免无限循环。", "red"))
                     break
 
+                # GATHER: understand repo / context for current iteration
                 pipeline.run_stage(Stage.GATHER, ctx, request=self._collect_hints(ctx))
                 print(colored("GATHER 完成", "blue"))
 
+                # EDIT: generate or modify code BEFORE environment decision
                 pipeline.run_stage(Stage.EDIT, ctx)
                 print(colored(f"EDIT 完成，补丁数：{len(ctx.patch_queue)}", "blue"))
+
+                # APPLY: apply patches to workspace
 
                 ctx.events.emit("stage.enter", {"stage": Stage.APPLY.name})
                 if ctx.patch_queue:
@@ -116,6 +109,18 @@ class Orchestrator:
                     ctx.events.emit("apply.result", {"status": "skip", "patches": []})
                 ctx.events.emit("stage.exit", {"stage": Stage.APPLY.name, "status": "ok"})
 
+                # PREPARE: environment decision AFTER code is materialized on disk
+                pipeline.run_stage(Stage.PREPARE, ctx)
+                if not ctx.env_decision or ctx.env_decision.get("strategy") == "error":
+                    print(colored("环境决策失败，无法继续。", "red"))
+                    self._flush_events(ctx)
+                    return
+                self._print_env(ctx.env_decision)
+                if not auto:
+                    choice = input("环境已选择，继续构建与测试？(y/n): ").strip().lower()
+                    if choice not in ("y", "yes", ""):
+                        break
+
                 # Enforce test coverage: if code files changed but no test file changed, require another iteration to add tests.
                 need_tests, reason = self._check_test_coverage_needed(ctx)
                 if need_tests:
@@ -130,6 +135,7 @@ class Orchestrator:
                         continue
                     break
 
+                # VERIFY_BUILD: build after env decision
                 build_results = pipeline.run_stage(Stage.VERIFY_BUILD, ctx)
                 build_ok = build_results and build_results[-1].status == "ok"
                 print(colored(f"BUILD 结果：{'成功' if build_ok else '失败'}", "yellow" if build_ok else "red"))
