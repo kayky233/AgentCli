@@ -1050,7 +1050,7 @@
         // Trigger an immediate state refresh so the detail panel loads this run.
         fetchState();
 
-        feedback.textContent = "Task submitted and run created.";
+        feedback.textContent = "Run created: " + runId;
         feedback.className = "ok";
       } catch (e) {
         feedback.textContent = "Error submitting task: " + e.message;
