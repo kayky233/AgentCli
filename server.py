@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 from typing import Dict, Any
 
+import asyncio
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, StreamingResponse
 
@@ -10,6 +11,9 @@ app = FastAPI()
 
 # In-memory store for simple run status querying by run_id (derived from agent_state.json).
 RUN_STATE_CACHE: Dict[str, Dict[str, Any]] = {}
+
+# Async queue for run execution in the FastAPI worker.
+RUN_QUEUE: "asyncio.Queue[str]" = asyncio.Queue()
 
 
 @app.get("/state")
@@ -107,6 +111,14 @@ def get_run(run_id: str):
     return JSONResponse(content=resp)
 
 
+@app.get("/api/debug/queue")
+async def debug_queue():
+    """
+    Return the current approximate queue length for the in-process worker.
+    """
+    return JSONResponse(content={"queue_length": RUN_QUEUE.qsize()})
+
+
 @app.get("/api/runs/{run_id}/events")
 def stream_run_events(run_id: str):
     """
@@ -187,9 +199,10 @@ def stream_run_events(run_id: str):
 @app.post("/task")
 async def add_task(request: Request):
     """
-    Append an incoming task to pending_tasks.json (one JSON object per line).
-    Expected payload: {"task": "..."}.
-    Also returns a provisional run_id so the frontend can focus a run immediately.
+    Legacy endpoint: append an incoming task to pending_tasks.json.
+
+    NOTE: For new implementations prefer POST /api/runs, which enqueues a run
+    directly into the in-process worker queue and returns run_id immediately.
     """
     data = await request.json()
     task = (data.get("task") or "").strip()
@@ -199,9 +212,7 @@ async def add_task(request: Request):
             status_code=400,
         )
 
-    # Provisional run_id; the real orchestrator run_id will usually match this timestamp-based id.
     run_id = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-
     entry = {
         "task": task,
         "created_at": datetime.utcnow().isoformat() + "Z",
@@ -217,6 +228,113 @@ async def add_task(request: Request):
             status_code=500,
         )
     return {"status": "received", "task": entry, "run_id": run_id}
+
+
+@app.post("/api/runs")
+async def create_run(request: Request):
+    """
+    Create a new run and enqueue it into the background worker queue.
+
+    Request JSON:
+      { "task": "..." }
+
+    Response JSON:
+      { "run_id": "..." }
+    """
+    data = await request.json()
+    task = (data.get("task") or "").strip()
+    if not task:
+        return JSONResponse(
+            content={"error": "task is required"},
+            status_code=400,
+        )
+
+    run_id = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+
+    # Initialize a minimal state snapshot for this run as queued.
+    RUN_STATE_CACHE[run_id] = {
+        "run_id": run_id,
+        "task": task,
+        "status": "queued",
+        "current_stage": None,
+        "steps_done": 0,
+        "steps_total": 0,
+        "elapsed_ms": None,
+        "stages": [],
+        "last_error": None,
+        "events_tail": [],
+    }
+
+    # Enqueue run_id for the worker loop.
+    await RUN_QUEUE.put(run_id)
+
+    return JSONResponse(content={"run_id": run_id})
+
+
+async def worker_loop():
+    """
+    Background worker that consumes run_ids from RUN_QUEUE and executes the
+    pipeline in a separate thread, updating RUN_STATE_CACHE and emitting logs.
+
+    NOTE: The actual orchestration/pipeline execution remains in the CLI app.
+    This worker is a placeholder to demonstrate queue consumption and state
+    transitions without blocking the FastAPI event loop.
+    """
+    import time as _time
+    import traceback
+
+    while True:
+        run_id = await RUN_QUEUE.get()
+        state = RUN_STATE_CACHE.get(run_id)
+        if not state:
+            # Nothing to do; defensive check.
+            RUN_QUEUE.task_done()
+            continue
+
+        start_ts = _time.time()
+        state["status"] = "running"
+        state["current_stage"] = "PLAN"
+        state["stages"] = [
+            {"name": "PLAN", "status": "running", "message": "", "started_at": start_ts, "ended_at": None},
+        ]
+        state["steps_total"] = 1
+        state["steps_done"] = 0
+        RUN_STATE_CACHE[run_id] = state
+
+        try:
+            # Simulate a blocking pipeline call in a worker thread.
+            async def _simulate_pipeline():
+                def _work():
+                    _time.sleep(2.0)
+
+                await asyncio.to_thread(_work)
+
+            await _simulate_pipeline()
+
+            # Mark stage completed
+            end_ts = _time.time()
+            state["stages"][0]["status"] = "succeeded"
+            state["stages"][0]["ended_at"] = end_ts
+            state["steps_done"] = 1
+            state["status"] = "succeeded"
+            state["elapsed_ms"] = int((end_ts - start_ts) * 1000)
+            state["current_stage"] = "PLAN"
+            RUN_STATE_CACHE[run_id] = state
+        except Exception:
+            end_ts = _time.time()
+            tb = traceback.format_exc()
+            state["status"] = "failed"
+            state["elapsed_ms"] = int((end_ts - start_ts) * 1000)
+            state["last_error"] = {"traceback": tb}
+            RUN_STATE_CACHE[run_id] = state
+        finally:
+            RUN_QUEUE.task_done()
+
+
+@app.on_event("startup")
+async def startup_event():
+    # Start background worker loop.
+    asyncio.create_task(worker_loop())
 
 
 if __name__ == "__main__":
