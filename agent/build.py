@@ -13,12 +13,6 @@ class BuildDiagnoser:
 
     def run(self, ctx_or_state, build_cmd: Union[str, List[str]], cwd: Path) -> Dict:
         self.counter += 1
-        # If a target_workspace exists under the repo root, always run builds there.
-        repo_root = getattr(ctx_or_state, "repo_root", None)
-        if repo_root is not None:
-            tw = Path(repo_root) / "target_workspace"
-            if tw.is_dir():
-                cwd = tw
         res = self._run_command(ctx_or_state, build_cmd, cwd=cwd)
         rm = getattr(ctx_or_state, "run_manager", self.run_manager)
         log_path = rm.save_verify_log(ctx_or_state, self.counter, "make", res["stdout"] + "\n" + res["stderr"])

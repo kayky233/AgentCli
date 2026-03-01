@@ -47,7 +47,7 @@ class AiderEditPlugin:
             )
 
         repo_root: Path = getattr(ctx, "repo_root", Path("."))
-        workdir = self._resolve_workdir(ctx, repo_root)
+        workdir = getattr(ctx, "workspace", repo_root)
 
         cmd = self._build_aider_command(ctx, task_text, files, workdir)
         ctx.events.emit(
@@ -149,14 +149,7 @@ class AiderEditPlugin:
         return files
 
     def _resolve_workdir(self, ctx, repo_root: Path) -> Path:
-        # Use an isolated workspace under repo_root to avoid modifying the agent framework itself
-        workspace = Path(repo_root) / "target_workspace"
-        try:
-            workspace.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            # Fallback: still try to use the directory even if mkdir hit a race or permission issue
-            pass
-        return workspace
+        return getattr(ctx, "workspace", repo_root)
 
     def _build_aider_command(self, ctx, task_text: str, files: List[str], workdir: Path) -> List[str]:
         cmd: List[str] = shlex.split(self.aider_cmd)

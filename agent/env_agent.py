@@ -54,13 +54,7 @@ class EnvAgent:
             or ("python" in task_lower)
         ) and not ws.get("has_makefile")
 
-        # 强力 Python 识别：目录下存在 requirements.txt / requirements.json 或任意 .py 文件时，直接走 Python 策略
-        requirements_path = ws.get("path")
-        workspace_path = Path(requirements_path) if requirements_path else req.workspace
-        has_requirements = ws.get("has_requirements_txt") or has_requirements_json
-        has_any_py = any(p.suffix == ".py" for p in workspace_path.glob("*.py"))
-
-        if has_requirements or has_any_py or ("python" in task_lower):
+        if is_python_project:
             build_cmd = 'echo "No build needed"'
             test_cmd = "pytest"
             note = "Detected Python project; using no-op build and pytest as test command."
@@ -235,31 +229,20 @@ class EnvAgent:
         """
         py_cmd = det.get("python", {}).get("path") or "python3.11"
 
-        # 针对 Python 项目：main.py / requirements.txt / setup.py
+        # 针对 Python 项目：使用 build.py 作为 fallback 入口（如存在）
         ws = det.get("workspace", {})
         if prefer_python:
-            requirements = workspace / "requirements.txt"
-            main_py = workspace / "main.py"
-
-            if main_py.exists():
-                build_parts = []
-                if requirements.exists():
-                    # 在构建前自动安装依赖
-                    build_parts.append(f"{py_cmd} -m pip install -r {requirements}")
-                # 使用 main.py 作为入口
-                build_parts.append(f"{py_cmd} {main_py}")
-                build_cmd = " && ".join(build_parts)
-                test_cmd = ""  # 对于简单 Python 脚本，没有固定测试命令
-                warn = "检测到 Python 项目，使用 python_script 策略（main.py 作为入口）。"
+            build_py = workspace / "build.py"
+            if build_py.exists():
+                build_cmd = f"{py_cmd} {build_py} build"
+                test_cmd = f"{py_cmd} {build_py} test"
+                warn = "检测到 Python 项目，使用 Python build.py 作为构建入口。"
                 return {
-                    "build_cmd": build_cmd or f"{py_cmd} {main_py}",
+                    "build_cmd": build_cmd,
                     "test_cmd": test_cmd,
                     "warn": warn,
-                    "strategy": "python_script",
+                    "strategy": "fallback_py",
                 }
-
-            # 没有 main.py，就退回到通用 fallback_py（如果存在 build.py）
-            # 继续往下执行
 
         build_py = workspace / "build.py"
         if not build_py.exists():

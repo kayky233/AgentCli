@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict
 
 from ..build import BuildDiagnoser
@@ -25,16 +24,7 @@ class BuildPlugin:
             ctx.events.emit("build.result", {"status": "fail", "error": "no build command"})
             return AgentResult(status="fail")
 
-        # Prefer target_workspace under the repo root if it exists, otherwise fall back to ctx.workspace.
-        repo_root = getattr(ctx, "repo_root", None)
-        if repo_root is not None:
-            tw = Path(repo_root) / "target_workspace"
-            if tw.is_dir():
-                cwd = tw
-            else:
-                cwd = getattr(ctx, "target_workspace", None) or ctx.workspace
-        else:
-            cwd = getattr(ctx, "target_workspace", None) or ctx.workspace
+        cwd = getattr(ctx, "workspace", None)
 
         res = self.agent.run(ctx, build_cmd, cwd=cwd)
         ctx.last_build_result = res
