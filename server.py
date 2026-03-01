@@ -53,6 +53,7 @@ async def add_task(request: Request):
     """
     Append an incoming task to pending_tasks.json (one JSON object per line).
     Expected payload: {"task": "..."}.
+    Also returns a provisional run_id so the frontend can focus a run immediately.
     """
     data = await request.json()
     task = (data.get("task") or "").strip()
@@ -62,9 +63,13 @@ async def add_task(request: Request):
             status_code=400,
         )
 
+    # Provisional run_id; the real orchestrator run_id will usually match this timestamp-based id.
+    run_id = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+
     entry = {
         "task": task,
         "created_at": datetime.utcnow().isoformat() + "Z",
+        "run_id": run_id,
     }
     pending_path = Path("pending_tasks.json")
     try:
@@ -75,7 +80,7 @@ async def add_task(request: Request):
             content={"error": f"failed to append task: {e}"},
             status_code=500,
         )
-    return {"status": "received", "task": entry}
+    return {"status": "received", "task": entry, "run_id": run_id}
 
 
 if __name__ == "__main__":
