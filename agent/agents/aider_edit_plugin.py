@@ -135,28 +135,63 @@ class AiderEditPlugin:
         return files
 
     def _resolve_workdir(self, ctx, repo_root: Path) -> Path:
-        workdir = getattr(ctx, "workspace", None) or getattr(ctx, "workdir", None)
-        if workdir:
-            return Path(workdir)
+        # Always use repo_root as working directory to avoid being stuck in subdirs
         return Path(repo_root)
 
     def _build_aider_command(self, task_text: str, files: List[str]) -> List[str]:
         cmd: List[str] = shlex.split(self.aider_cmd)
+
         # Ensure --no-git is present
         if "--no-git" not in cmd:
             cmd.append("--no-git")
+
+        # Ensure model is explicitly set to gpt-5.1 (override any existing --model)
+        # Remove any existing --model and its value
+        cleaned_cmd: List[str] = []
+        skip_next = False
+        for i, part in enumerate(cmd):
+            if skip_next:
+                skip_next = False
+                continue
+            if part == "--model":
+                skip_next = True
+                continue
+            if part.startswith("--model="):
+                continue
+            cleaned_cmd.append(part)
+        cmd = cleaned_cmd
+        cmd.extend(["--model", "gpt-5.1"])
+
         extra = os.environ.get("AIDER_EXTRA_ARGS", "").strip()
         if extra:
             extra_parts = shlex.split(extra)
-            # Avoid duplicating --no-git if user already put it into AIDER_EXTRA_ARGS
+            # Avoid duplicating --no-git or overriding model from AIDER_EXTRA_ARGS
+            skip_next = False
             for part in extra_parts:
+                if skip_next:
+                    skip_next = False
+                    continue
                 if part == "--no-git" and "--no-git" in cmd:
                     continue
+                if part == "--model":
+                    skip_next = True
+                    continue
+                if part.startswith("--model="):
+                    continue
                 cmd.append(part)
-        # Strengthen the message to instruct aider to create missing files
+
+        # Auto-include requirements.json if present in current working directory
+        req_path = Path("requirements.json")
+        if req_path.is_file():
+            req_str = str(req_path)
+            if req_str not in files:
+                files.append(req_str)
+
+        # Strengthen the message to instruct aider to create missing files and use gpt-5.1
         enhanced_task = (
             f"{task_text}\n\n"
-            "重要：如果需要的文件不存在，请直接创建它们，不要只尝试编辑已有文件。"
+            "重要：如果需要的文件不存在，请直接创建它们，不要只尝试编辑已有文件。\n"
+            "这是基于 requirements.json 的项目。如果涉及文件不存在，必须创建它们。请使用 gpt-5.1 模型进行编辑。"
         )
         cmd.extend(["--message", enhanced_task])
         cmd.extend(files)
