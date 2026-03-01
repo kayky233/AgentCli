@@ -642,9 +642,9 @@
     }
 
     async function fetchState() {
+      // Lightweight call used only for top bar (iteration / stage / task).
       try {
-        const query = selectedRunId ? (`?run_id=${encodeURIComponent(selectedRunId)}&_=${Date.now()}`) : (`?_=${Date.now()}`);
-        const resp = await fetch(window.location.origin + "/state" + query);
+        const resp = await fetch(window.location.origin + "/state?_=" + Date.now());
         if (!resp.ok) {
           throw new Error("HTTP " + resp.status);
         }
@@ -937,44 +937,13 @@
     }
 
     function renderState(state) {
+      // Only update top bar info from /state; run list & detail are driven by /api/runs polling/SSE.
       document.getElementById("iteration").textContent =
         state.iteration != null ? state.iteration : "-";
       document.getElementById("stage").textContent =
         state.current_stage || "-";
       document.getElementById("task").textContent =
         state.task ? ("Task: " + state.task) : "";
-
-      // Update runs array with a simple single-run model from state.json for now.
-      // In the future this can be replaced with a dedicated /api/runs endpoint.
-      if (state.run_id) {
-        const existingIndex = runs.findIndex((r) => r.id === state.run_id);
-        const entry = {
-          id: state.run_id,
-          status: state.status || (state.current_stage ? "running" : "queued"),
-          current_stage: state.current_stage,
-          elapsed_ms: state.elapsed_ms ?? null,
-        };
-        if (existingIndex >= 0) {
-          runs[existingIndex] = entry;
-        } else {
-          runs.unshift(entry);
-        }
-        if (!selectedRunId) {
-          selectedRunId = state.run_id;
-          document.getElementById("run-detail-title").textContent = state.run_id;
-          setupSSE();
-          startRunPolling();
-        }
-        renderRunsList();
-        const selected = runs.find((r) => r.id === selectedRunId) || entry;
-        updateRunHeader(selected);
-      } else {
-        updateRunHeader(null);
-      }
-
-      renderStageTimeline(state);
-      renderChanges(state);
-      renderEvidence(state);
 
       window.__latestEvents = state.events_tail || [];
       renderLogs();
@@ -1213,8 +1182,8 @@
         alert("Retry is not implemented yet.");
       });
 
+      // Initial one-time fetch for top bar; no tight interval polling needed.
       fetchState();
-      setInterval(fetchState, 1000);
       updateConnectionIndicator();
     });
   </script>
