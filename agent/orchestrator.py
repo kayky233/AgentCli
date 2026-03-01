@@ -420,6 +420,7 @@ class Orchestrator:
             "changes_diffs": changes_diffs,
             "last_build_result": getattr(ctx, "last_build_result", None),
             "last_test_result": getattr(ctx, "last_test_result", None),
+            "artifacts": getattr(ctx, "artifacts", {}),
             "events_tail": recent_events,
         }
 

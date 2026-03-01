@@ -442,7 +442,29 @@
         </div>
       </div>
       <div id="tab-evidence" class="tab-content" style="display:none;">
-        <div style="color:#9ca3af;">Evidence view coming soon.</div>
+        <div id="evidence-container" style="display:flex; flex-direction:column; gap:8px;">
+          <div style="border:1px solid #1f2937; border-radius:6px; background:#020617; padding:8px;">
+            <div style="font-size:13px; font-weight:600; margin-bottom:4px;">Build</div>
+            <div id="evidence-build-summary" style="font-size:12px; color:#e5e7eb;">No build result yet.</div>
+            <pre id="evidence-build-log" style="margin-top:4px; max-height:120px; overflow-y:auto; background:#020617; border-radius:4px; padding:4px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size:11px; color:#d1d5db; white-space:pre-wrap;"></pre>
+          </div>
+          <div style="border:1px solid #1f2937; border-radius:6px; background:#020617; padding:8px;">
+            <div style="font-size:13px; font-weight:600; margin-bottom:4px;">Test</div>
+            <div id="evidence-test-summary" style="font-size:12px; color:#e5e7eb;">No test result yet.</div>
+            <pre id="evidence-test-log" style="margin-top:4px; max-height:120px; overflow-y:auto; background:#020617; border-radius:4px; padding:4px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size:11px; color:#d1d5db; white-space:pre-wrap;"></pre>
+          </div>
+          <div style="border:1px solid #1f2937; border-radius:6px; background:#020617; padding:8px;">
+            <div style="font-size:13px; font-weight:600; margin-bottom:4px;">Artifacts</div>
+            <div style="display:flex; gap:8px; font-size:12px;">
+              <button id="artifact-download-zip" style="padding:4px 10px; border-radius:4px; border:1px solid #4b5563; background:#020617; color:#e5e7eb; cursor:pointer;" disabled>
+                Download workspace zip
+              </button>
+              <button id="artifact-download-report" style="padding:4px 10px; border-radius:4px; border:1px solid #4b5563; background:#020617; color:#e5e7eb; cursor:pointer;" disabled>
+                Download report.json
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -683,6 +705,75 @@
       });
     }
 
+    function renderEvidence(state) {
+      const build = state.last_build_result || null;
+      const test = state.last_test_result || null;
+
+      const buildSummaryEl = document.getElementById("evidence-build-summary");
+      const buildLogEl = document.getElementById("evidence-build-log");
+      const testSummaryEl = document.getElementById("evidence-test-summary");
+      const testLogEl = document.getElementById("evidence-test-log");
+      const zipBtn = document.getElementById("artifact-download-zip");
+      const reportBtn = document.getElementById("artifact-download-report");
+
+      if (buildSummaryEl) {
+        if (build) {
+          const ok = !!build.ok;
+          const cmd = build.command || build.cmd || "";
+          const exitCode = build.exit_code;
+          buildSummaryEl.textContent =
+            `Status: ${ok ? "OK" : "FAILED"}  ` +
+            (cmd ? `Command: ${cmd}  ` : "") +
+            (exitCode !== undefined ? `Exit code: ${exitCode}` : "");
+          const log = build.stdout || build.stderr || build.log || "";
+          buildLogEl.textContent = log || "(no build logs)";
+        } else {
+          buildSummaryEl.textContent = "No build result yet.";
+          buildLogEl.textContent = "";
+        }
+      }
+
+      if (testSummaryEl) {
+        if (test) {
+          const ok = !!test.ok;
+          const total = test.total || test.total_tests || 0;
+          const failed = test.failed || test.failures || [];
+          const failedCount = Array.isArray(failed) ? failed.length : 0;
+          testSummaryEl.textContent =
+            `Status: ${ok ? "OK" : "FAILED"}  ` +
+            `Total: ${total}  Failed: ${failedCount}`;
+          const log = test.stdout || test.stderr || test.log || "";
+          const failedNames = Array.isArray(failed)
+            ? failed.map((f) => (typeof f === "string" ? f : f.name || JSON.stringify(f))).join("\n")
+            : "";
+          testLogEl.textContent = (log || "") + (failedNames ? "\n\nFailed:\n" + failedNames : "");
+        } else {
+          testSummaryEl.textContent = "No test result yet.";
+          testLogEl.textContent = "";
+        }
+      }
+
+      if (zipBtn) {
+        const workspaceZip = state.artifacts && state.artifacts.workspace_zip;
+        zipBtn.disabled = !workspaceZip;
+        zipBtn.onclick = workspaceZip
+          ? () => {
+              window.location.href = workspaceZip;
+            }
+          : null;
+      }
+
+      if (reportBtn) {
+        const reportUrl = state.artifacts && state.artifacts.report_json;
+        reportBtn.disabled = !reportUrl;
+        reportBtn.onclick = reportUrl
+          ? () => {
+              window.location.href = reportUrl;
+            }
+          : null;
+      }
+    }
+
     function renderChanges(state) {
       const files = state.applied_files || [];
       const diffs = state.changes_diffs || {};
@@ -769,6 +860,7 @@
 
       renderStageTimeline(state);
       renderChanges(state);
+      renderEvidence(state);
 
       window.__latestEvents = state.events_tail || [];
       renderLogs();
