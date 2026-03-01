@@ -41,8 +41,16 @@ class EnvAgent:
         plat = self._detect_platform()
         det = self._detect_all(req.workspace)
 
-        # overrides make_cmd
-        if req.override_make_cmd:
+        # 优先识别 Python 项目：requirements.txt / setup.py / main.py 存在，且没有 Makefile
+        ws = det.get("workspace", {})
+        is_python_project = (
+            ws.get("has_requirements_txt")
+            or ws.get("has_setup_py")
+            or ws.get("has_main_py")
+        ) and not ws.get("has_makefile")
+
+        # overrides make_cmd（仅对 make 策略有意义）
+        if req.override_make_cmd and not is_python_project:
             if self._can_execute(req.override_make_cmd):
                 build = self._replace_make(req.preferred_build, req.override_make_cmd)
                 test = self._replace_make(req.preferred_test, req.override_make_cmd)
@@ -56,18 +64,18 @@ class EnvAgent:
                 )
             return self._error(plat, det, f"指定的 --make-cmd 不可执行：{req.override_make_cmd}")
 
-        # force strategy from interactive switch
-        if req.force_strategy == "wsl":
+        # 如果明确强制策略
+        if req.force_strategy == "wsl" and not is_python_project:
             wsl_dec = self._wsl_path_and_wrap(req, det, plat)
             if wsl_dec:
                 return wsl_dec
             return self._error(plat, det, "请求使用 WSL 但不可用。")
         if req.force_strategy == "fallback":
-            fb = self._fallback_commands(req.workspace, det)
+            fb = self._fallback_commands(req.workspace, det, prefer_python=is_python_project)
             if fb:
                 return self._decision(
                     plat,
-                    "fallback_py",
+                    fb["strategy"],
                     fb["build_cmd"],
                     fb["test_cmd"],
                     det,
@@ -75,14 +83,28 @@ class EnvAgent:
                 )
             return self._error(plat, det, "请求使用 fallback 但无法生成命令。")
 
-        # WSL override
-        if req.override_use_wsl:
+        # 针对 Python 项目：优先使用 python_script/fallback_py 策略，而不是 gnu_make
+        if is_python_project:
+            fb = self._fallback_commands(req.workspace, det, prefer_python=True)
+            if fb:
+                return self._decision(
+                    plat,
+                    fb["strategy"],
+                    fb["build_cmd"],
+                    fb["test_cmd"],
+                    det,
+                    warn=fb.get("warn"),
+                )
+            return self._error(plat, det, "检测到 Python 项目，但无法生成 Python 构建命令。")
+
+        # WSL override（仅对 make 流程有意义）
+        if req.override_use_wsl and not is_python_project:
             wsl_dec = self._wsl_path_and_wrap(req, det, plat)
             if wsl_dec:
                 return wsl_dec
             return self._error(plat, det, "请求使用 WSL 但不可用。")
 
-        # Native decisions
+        # 通用原生决策（以 make 为主）
         if plat == "windows":
             mk = self._first_available(det, ["mingw32-make", "make", "gmake"])
             if mk:
@@ -97,22 +119,20 @@ class EnvAgent:
                 wsl_dec = self._wsl_path_and_wrap(req, det, plat)
                 if wsl_dec:
                     return wsl_dec
-            if req.allow_fallback:
-                fb = self._fallback_commands(req.workspace, det)
-                if fb:
-                    return self._decision(plat, "fallback_py", fb["build_cmd"], fb["test_cmd"], det, warn=fb.get("warn"))
-            return self._error(plat, det, "未找到 make，且 fallback 被禁用或不可用。")
         else:
             mk = self._first_available(det, ["make", "gmake"])
             if mk:
                 build = self._replace_make(req.preferred_build, mk)
                 test = self._replace_make(req.preferred_test, mk)
                 return self._decision(plat, "gnu_make", build, test, det, note=f"Detected {mk}")
-            if req.allow_fallback:
-                fb = self._fallback_commands(req.workspace, det)
-                if fb:
-                    return self._decision(plat, "fallback_py", fb["build_cmd"], fb["test_cmd"], det, warn=fb.get("warn"))
-            return self._error(plat, det, "未找到 make。")
+
+        # make 不可用时的通用 fallback
+        if req.allow_fallback:
+            fb = self._fallback_commands(req.workspace, det, prefer_python=is_python_project)
+            if fb:
+                return self._decision(plat, fb["strategy"], fb["build_cmd"], fb["test_cmd"], det, warn=fb.get("warn"))
+        err_msg = "未找到 make。" if not is_python_project else "未找到合适的构建策略。"
+        return self._error(plat, det, err_msg)
 
     # ------------------ helpers ------------------ #
     def _detect_platform(self) -> str:
@@ -141,6 +161,9 @@ class EnvAgent:
                 "path": str(workspace),
                 "has_makefile": (workspace / "Makefile").exists(),
                 "has_build_py": (workspace / "build.py").exists(),
+                "has_requirements_txt": (workspace / "requirements.txt").exists(),
+                "has_setup_py": (workspace / "setup.py").exists(),
+                "has_main_py": (workspace / "main.py").exists(),
             },
         }
 
@@ -179,15 +202,52 @@ class EnvAgent:
             return {}
         return {"path": py, "version": sys.version.split()[0]}
 
-    def _fallback_commands(self, workspace: Path, det: Dict) -> Optional[Dict[str, str]]:
+    def _fallback_commands(self, workspace: Path, det: Dict, prefer_python: bool = False) -> Optional[Dict[str, str]]:
+        """
+        通用 fallback 决策：
+        - prefer_python=True 时优先为 Python 项目生成命令（python_script 策略）
+        - 否则退回到现有的 build.py 驱动的 fallback_py 策略
+        """
+        py_cmd = det.get("python", {}).get("path") or "python3.11"
+
+        # 针对 Python 项目：main.py / requirements.txt / setup.py
+        ws = det.get("workspace", {})
+        if prefer_python:
+            requirements = workspace / "requirements.txt"
+            main_py = workspace / "main.py"
+
+            if main_py.exists():
+                build_parts = []
+                if requirements.exists():
+                    # 在构建前自动安装依赖
+                    build_parts.append(f"{py_cmd} -m pip install -r {requirements}")
+                # 使用 main.py 作为入口
+                build_parts.append(f"{py_cmd} {main_py}")
+                build_cmd = " && ".join(build_parts)
+                test_cmd = ""  # 对于简单 Python 脚本，没有固定测试命令
+                warn = "检测到 Python 项目，使用 python_script 策略（main.py 作为入口）。"
+                return {
+                    "build_cmd": build_cmd or f"{py_cmd} {main_py}",
+                    "test_cmd": test_cmd,
+                    "warn": warn,
+                    "strategy": "python_script",
+                }
+
+            # 没有 main.py，就退回到通用 fallback_py（如果存在 build.py）
+            # 继续往下执行
+
         build_py = workspace / "build.py"
         if not build_py.exists():
             return None
-        py_cmd = det.get("python", {}).get("path") or "python"
         build_cmd = f"{py_cmd} {build_py} build"
         test_cmd = f"{py_cmd} {build_py} test"
         warn = "未检测到 make，使用 python fallback 构建器。"
-        return {"build_cmd": build_cmd, "test_cmd": test_cmd, "warn": warn}
+        return {
+            "build_cmd": build_cmd,
+            "test_cmd": test_cmd,
+            "warn": warn,
+            "strategy": "fallback_py",
+        }
 
     def _replace_make(self, cmd: str, make_cmd: str) -> str:
         parts = shlex.split(cmd)
