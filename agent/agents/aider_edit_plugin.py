@@ -55,11 +55,25 @@ class AiderEditPlugin:
             {"cmd": shlex.join(cmd), "cwd": str(workdir), "files": files},
         )
 
+        # Capture existing file state (for existence-based success detection)
+        pre_existing_files = {str(Path(workdir) / f) for f in files}
+
         result = self._run_subprocess(cmd, cwd=workdir)
         if result.get("stdout"):
             print(result["stdout"])
         returncode = result.get("returncode", 1)
+
+        # Determine status:
+        # - ok if returncode == 0
+        # - additionally, even if git diff is empty, consider success if aider created any of the target files
         status = "ok" if returncode == 0 else "error"
+
+        if returncode == 0 and files:
+            post_existing_files = {str(Path(workdir) / f) for f in files if (Path(workdir) / f).exists()}
+            created_files = sorted(post_existing_files - pre_existing_files)
+            if created_files:
+                # Treat as successful edit because files were created
+                status = "ok"
 
         self._persist_logs(ctx, cmd, result)
 

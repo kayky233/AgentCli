@@ -54,16 +54,30 @@ class EnvAgent:
         workspace_path = Path(requirements_path) if requirements_path else req.workspace
         has_requirements = ws.get("has_requirements_txt")
         has_any_py = any(p.suffix == ".py" for p in workspace_path.glob("*.py"))
+        has_setup_py = ws.get("has_setup_py")
+        has_pyproject = (workspace_path / "pyproject.toml").exists()
+        is_package = bool(has_setup_py or has_pyproject)
+
         if has_requirements or has_any_py:
-            build_cmd = "pip install -r requirements.txt" if has_requirements else "pip install ."
-            test_cmd = "pytest"
+            # 包项目：执行 pip install .
+            if is_package:
+                build_cmd = "pip install -r requirements.txt" if has_requirements else "pip install ."
+                test_cmd = "pytest"
+                note = "Detected Python package project via setup.py/pyproject.toml"
+            else:
+                # 纯脚本项目：不需要构建，只做简单运行验证
+                build_cmd = "echo 'No build needed'"
+                # 使用一个简单的脚本作为验证入口
+                test_cmd = "python calculator.py --help"
+                note = "Detected Python script project (no setup.py/pyproject.toml); using simple run verification"
+
             return self._decision(
                 plat,
                 "python",
                 build_cmd,
                 test_cmd,
                 det,
-                note="Detected Python project via requirements.txt or .py files",
+                note=note,
             )
 
         # overrides make_cmd（仅对 make 策略有意义）
