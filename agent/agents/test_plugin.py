@@ -31,7 +31,8 @@ class TestPlugin:
         injected = self._inject_test_should_fail_off(test_cmd)
         if injected != test_cmd:
             ctx.events.emit("test.env.inject", {"name": "TEST_SHOULD_FAIL", "value": "0"})
-        res = self.agent.run(ctx, injected, cwd=ctx.workspace)
+        cwd = getattr(ctx, "target_workspace", None) or ctx.workspace
+        res = self.agent.run(ctx, injected, cwd=cwd)
         ctx.last_test_result = res
         ctx.save_json(f"test_{ctx.iteration}", res)
         ctx.events.emit("test.result", {"status": "ok" if res["success"] else "fail", "summary": res.get("summary", [])})

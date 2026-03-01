@@ -144,6 +144,9 @@ class Orchestrator:
                 if test_ok and not ctx.policy.get("need_tests"):
                     print(colored("全部通过！", "green"))
                     break
+                if iteration > 3:
+                    print(colored("达到最大测试重试次数，终止迭代", "red"))
+                    break
                 if test_ok and ctx.policy.get("need_tests"):
                     # Tests passed but policy still requires coverage; keep iterating.
                     print(colored("测试通过，但仍需补齐测试用例覆盖变更，继续迭代。", "yellow"))
