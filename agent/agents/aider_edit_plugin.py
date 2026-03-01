@@ -49,7 +49,7 @@ class AiderEditPlugin:
         repo_root: Path = getattr(ctx, "repo_root", Path("."))
         workdir = self._resolve_workdir(ctx, repo_root)
 
-        cmd = self._build_aider_command(task_text, files)
+        cmd = self._build_aider_command(ctx, task_text, files)
         ctx.events.emit(
             "aider_edit.start",
             {"cmd": shlex.join(cmd), "cwd": str(workdir), "files": files},
@@ -152,7 +152,7 @@ class AiderEditPlugin:
         # Always use repo_root as working directory to avoid being stuck in subdirs
         return Path(repo_root)
 
-    def _build_aider_command(self, task_text: str, files: List[str]) -> List[str]:
+    def _build_aider_command(self, ctx, task_text: str, files: List[str]) -> List[str]:
         cmd: List[str] = shlex.split(self.aider_cmd)
 
         # Ensure --no-git is present
