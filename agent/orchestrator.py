@@ -69,8 +69,11 @@ class Orchestrator:
 
         try:
             # PLAN: generate structured requirements spec (if LLM available)
+            ctx.current_stage = Stage.PLAN.name
+            self._update_state_file(ctx)
             print("--- [DEBUG] Orchestrator is calling PLAN stage ---")
             pipeline.run_stage(Stage.PLAN, ctx)
+            self._update_state_file(ctx)
 
             iteration = 0
             while iteration < self.max_iters:
@@ -84,15 +87,23 @@ class Orchestrator:
                     break
 
                 # GATHER: understand repo / context for current iteration
+                ctx.current_stage = Stage.GATHER.name
+                self._update_state_file(ctx)
                 pipeline.run_stage(Stage.GATHER, ctx, request=self._collect_hints(ctx))
+                self._update_state_file(ctx)
                 print(colored("GATHER 完成", "blue"))
 
                 # EDIT: generate or modify code BEFORE environment decision
+                ctx.current_stage = Stage.EDIT.name
+                self._update_state_file(ctx)
                 pipeline.run_stage(Stage.EDIT, ctx)
+                self._update_state_file(ctx)
                 print(colored(f"EDIT 完成，补丁数：{len(ctx.patch_queue)}", "blue"))
 
                 # APPLY: apply patches to workspace
 
+                ctx.current_stage = Stage.APPLY.name
+                self._update_state_file(ctx)
                 ctx.events.emit("stage.enter", {"stage": Stage.APPLY.name})
                 if ctx.patch_queue:
                     if not auto:
@@ -104,10 +115,12 @@ class Orchestrator:
                     ctx.events.emit("apply.result", {"status": "ok" if apply_ok else "fail", "patches": ctx.patch_queue})
                     if not apply_ok:
                         ctx.events.emit("stage.exit", {"stage": Stage.APPLY.name, "status": "fail"})
+                        self._update_state_file(ctx)
                         break
                 else:
                     ctx.events.emit("apply.result", {"status": "skip", "patches": []})
                 ctx.events.emit("stage.exit", {"stage": Stage.APPLY.name, "status": "ok"})
+                self._update_state_file(ctx)
 
                 # PREPARE: environment decision AFTER code is materialized on disk
                 pipeline.run_stage(Stage.PREPARE, ctx)
@@ -124,6 +137,7 @@ class Orchestrator:
                 # Enforce test coverage: if code files changed but no test file changed, require another iteration to add tests.
                 need_tests, reason = self._check_test_coverage_needed(ctx)
                 if need_tests:
+                    self._update_state_file(ctx)
                     ctx.policy["need_tests"] = True
                     ctx.events.emit("policy.need_tests", {"reason": reason, "applied_files": list(ctx.applied_files)})
                     print(colored(f"需要补齐测试用例覆盖：{reason}", "yellow"))
@@ -136,7 +150,10 @@ class Orchestrator:
                     break
 
                 # VERIFY_BUILD: build after env decision
+                ctx.current_stage = Stage.VERIFY_BUILD.name
+                self._update_state_file(ctx)
                 build_results = pipeline.run_stage(Stage.VERIFY_BUILD, ctx)
+                self._update_state_file(ctx)
                 build_ok = build_results and build_results[-1].status == "ok"
                 print(colored(f"BUILD 结果：{'成功' if build_ok else '失败'}", "yellow" if build_ok else "red"))
                 if not build_ok:
@@ -148,13 +165,18 @@ class Orchestrator:
                     break
                 if ctx.options.get("build_only"):
                     print(colored("仅构建模式，结束。", "blue"))
+                    self._update_state_file(ctx)
                     break
 
+                ctx.current_stage = Stage.VERIFY_TEST.name
+                self._update_state_file(ctx)
                 test_results = pipeline.run_stage(Stage.VERIFY_TEST, ctx)
+                self._update_state_file(ctx)
                 test_ok = test_results and test_results[-1].status == "ok"
                 print(colored(f"TEST 结果：{'成功' if test_ok else '失败'}", "yellow" if test_ok else "red"))
                 if test_ok and not ctx.policy.get("need_tests"):
                     print(colored("全部通过！", "green"))
+                    self._update_state_file(ctx)
                     break
                 if iteration > 3:
                     print(colored("达到最大测试重试次数，终止迭代", "red"))
@@ -177,9 +199,12 @@ class Orchestrator:
         except Exception as exc:
             if 'ctx' in locals():
                 ctx.events.emit("run.error", {"error": str(exc)}, level="error")
+                self._update_state_file(ctx)
                 self._flush_events(ctx)
             print(colored(f"运行异常：{exc}", "red"))
         else:
+            if 'ctx' in locals():
+                self._update_state_file(ctx)
             self._flush_events(ctx)
 
     def rollback(self) -> None:
@@ -348,6 +373,49 @@ class Orchestrator:
     def _flush_events(self, ctx: RunContext):
         transcript = ctx.run_dir / "transcript.json"
         ctx.events.flush_to(transcript)
+
+    def _update_state_file(self, ctx: RunContext) -> None:
+        """
+        Dump a lightweight JSON state snapshot to agent_state.json in the current workspace.
+        Only includes JSON-serializable core fields and a tail of recent events.
+        """
+        state_path = Path(ctx.workspace) / "agent_state.json"
+
+        # Collect recent events if EventBus supports in-memory storage; otherwise, empty list.
+        recent_events: List[Dict[str, Any]] = []
+        events_obj = getattr(ctx, "events", None)
+        if events_obj is not None:
+            raw_events = getattr(events_obj, "events", None)
+            if isinstance(raw_events, list):
+                recent_events = raw_events[-50:]
+
+        def default(o: Any):
+            # Fallback serializer: use string repr to avoid JSON errors.
+            try:
+                return str(o)
+            except Exception:
+                return "<unserializable>"
+
+        snapshot: Dict[str, Any] = {
+            "iteration": getattr(ctx, "iteration", None),
+            "current_stage": getattr(ctx, "current_stage", None),
+            "task": getattr(ctx, "task", None),
+            "policy": getattr(ctx, "policy", {}),
+            "options": getattr(ctx, "options", {}),
+            "applied_files": list(getattr(ctx, "applied_files", []) or []),
+            "last_build_result": getattr(ctx, "last_build_result", None),
+            "last_test_result": getattr(ctx, "last_test_result", None),
+            "events_tail": recent_events,
+        }
+
+        try:
+            state_path.write_text(
+                json.dumps(snapshot, ensure_ascii=False, indent=2, default=default),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            # Best-effort; dashboard is non-critical.
+            print(colored(f"写入 agent_state.json 失败: {e}", "red"))
 
     def _print_env(self, decision: Dict[str, Any]):
         print(colored("环境决策", "blue"))

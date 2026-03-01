@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Agent Dashboard</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 16px;
+      background-color: #111827;
+      color: #e5e7eb;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 20px;
+    }
+    .meta {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .meta-item {
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: #1f2937;
+      font-size: 13px;
+    }
+    .label {
+      color: #9ca3af;
+      margin-right: 4px;
+    }
+    .value {
+      font-weight: 600;
+      color: #fbbf24;
+    }
+    #task {
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: #d1d5db;
+    }
+    #logs {
+      background: #0b1120;
+      border-radius: 6px;
+      padding: 8px;
+      max-height: 400px;
+      overflow-y: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+      border: 1px solid #1f2937;
+    }
+    .log-line {
+      padding: 2px 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .timestamp {
+      color: #6b7280;
+      margin-right: 6px;
+    }
+    .type {
+      color: #22c55e;
+      margin-right: 6px;
+    }
+    .error .type {
+      color: #f97316;
+    }
+    .warn .type {
+      color: #eab308;
+    }
+  </style>
+</head>
+<body>
+  <h1>Agent Live Dashboard</h1>
+  <div class="meta">
+    <div class="meta-item">
+      <span class="label">Iteration</span>
+      <span class="value" id="iteration">-</span>
+    </div>
+    <div class="meta-item">
+      <span class="label">Stage</span>
+      <span class="value" id="stage">-</span>
+    </div>
+  </div>
+  <div id="task"></div>
+  <div id="logs"></div>
+
+  <script>
+    async function fetchState() {
+      try {
+        const resp = await fetch("/state?_=" + Date.now());
+        if (!resp.ok) {
+          throw new Error("HTTP " + resp.status);
+        }
+        const data = await resp.json();
+        renderState(data);
+      } catch (e) {
+        console.error("Failed to fetch state", e);
+      }
+    }
+
+    function renderState(state) {
+      document.getElementById("iteration").textContent =
+        state.iteration != null ? state.iteration : "-";
+      document.getElementById("stage").textContent =
+        state.current_stage || "-";
+      document.getElementById("task").textContent =
+        state.task ? ("Task: " + state.task) : "";
+
+      const logsEl = document.getElementById("logs");
+      logsEl.innerHTML = "";
+      const events = state.events_tail || [];
+      events.forEach(ev => {
+        const line = document.createElement("div");
+        line.className = "log-line";
+
+        const level = (ev.level || "").toLowerCase();
+        if (level === "error") line.classList.add("error");
+        if (level === "warn" || level === "warning") line.classList.add("warn");
+
+        const ts = document.createElement("span");
+        ts.className = "timestamp";
+        ts.textContent = ev.timestamp || "";
+
+        const type = document.createElement("span");
+        type.className = "type";
+        type.textContent = ev.type || "";
+
+        const payload = document.createElement("span");
+        payload.textContent = ev.payload ? JSON.stringify(ev.payload) : "";
+
+        line.appendChild(ts);
+        line.appendChild(type);
+        line.appendChild(payload);
+        logsEl.appendChild(line);
+      });
+
+      logsEl.scrollTop = logsEl.scrollHeight;
+    }
+
+    fetchState();
+    setInterval(fetchState, 1000);
+  </script>
+</body>
+</html>
