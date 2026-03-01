@@ -181,6 +181,64 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
+    .tab-btn {
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: #d1d5db;
+      font-size: 12px;
+      cursor: pointer;
+      margin-right: 4px;
+    }
+    .tab-btn.active {
+      border-color: #2563eb;
+      background: rgba(37, 99, 235, 0.15);
+      color: #bfdbfe;
+    }
+    .tab-content {
+      margin-top: 8px;
+      font-size: 12px;
+    }
+    .stage-timeline {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .stage-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      padding: 4px 6px;
+      border-radius: 4px;
+      background: #020617;
+      border: 1px solid #1f2937;
+      cursor: pointer;
+    }
+    .stage-row.active {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.6);
+    }
+    .stage-status-icon {
+      width: 16px;
+      text-align: center;
+    }
+    .stage-main {
+      flex: 1;
+    }
+    .stage-title {
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+    .stage-meta {
+      color: #9ca3af;
+      margin-top: 2px;
+    }
+    .stage-summary {
+      margin-top: 4px;
+      color: #d1d5db;
+      white-space: pre-wrap;
+    }
     .chat-container {
       margin-top: 8px;
       padding: 12px;
@@ -287,10 +345,20 @@
         <button data-tab="changes" class="tab-btn">Changes</button>
         <button data-tab="evidence" class="tab-btn">Evidence</button>
       </div>
+      <div id="tab-progress" class="tab-content">
+        <div id="stage-timeline" class="stage-timeline"></div>
+      </div>
+      <div id="tab-logs" class="tab-content" style="display:none;">
+        <div id="logs"></div>
+      </div>
+      <div id="tab-changes" class="tab-content" style="display:none;">
+        <div style="color:#9ca3af;">Changes view coming soon.</div>
+      </div>
+      <div id="tab-evidence" class="tab-content" style="display:none;">
+        <div style="color:#9ca3af;">Evidence view coming soon.</div>
+      </div>
     </div>
   </div>
-
-  <div id="logs"></div>
 
   <div class="chat-container">
     <div class="chat-title">Submit a new task</div>
@@ -318,6 +386,27 @@
       "VERIFY_BUILD",
       "VERIFY_TEST",
     ];
+
+    function stageDisplayName(name) {
+      switch (name) {
+        case "PLAN":
+          return "Plan";
+        case "GATHER":
+          return "Gather";
+        case "EDIT":
+          return "Edit";
+        case "APPLY":
+          return "Apply";
+        case "PREPARE":
+          return "Prepare";
+        case "VERIFY_BUILD":
+          return "Verify Build";
+        case "VERIFY_TEST":
+          return "Verify Test";
+        default:
+          return name || "-";
+      }
+    }
 
     function computeSteps(runOrState) {
       const current = (runOrState.current_stage || "").toUpperCase();
@@ -438,6 +527,75 @@
       }
     }
 
+    function renderStageTimeline(state) {
+      const container = document.getElementById("stage-timeline");
+      if (!container) return;
+      container.innerHTML = "";
+
+      const current = (state.current_stage || "").toUpperCase();
+      STAGES_ORDER.forEach((stageName) => {
+        const row = document.createElement("div");
+        row.className = "stage-row";
+        if (stageName === current) {
+          row.classList.add("active");
+        }
+
+        const idx = STAGES_ORDER.indexOf(stageName);
+        const currentIdx = STAGES_ORDER.indexOf(current);
+        let icon = " ";
+        let statusText = "Pending";
+        if (currentIdx === -1) {
+          statusText = "Pending";
+        } else if (idx < currentIdx) {
+          icon = "✔";
+          statusText = "Done";
+        } else if (idx === currentIdx) {
+          icon = "▶";
+          statusText = "Running";
+        } else {
+          statusText = "Pending";
+        }
+
+        const iconSpan = document.createElement("span");
+        iconSpan.className = "stage-status-icon";
+        iconSpan.textContent = icon;
+
+        const main = document.createElement("div");
+        main.className = "stage-main";
+
+        const title = document.createElement("div");
+        title.className = "stage-title";
+        title.textContent = stageDisplayName(stageName);
+
+        const meta = document.createElement("div");
+        meta.className = "stage-meta";
+        meta.textContent = statusText;
+
+        let summaryText = "";
+        const summary = state.stage_summaries || {};
+        if (summary && summary[stageName]) {
+          summaryText = String(summary[stageName]);
+        }
+        const summaryEl = document.createElement("div");
+        summaryEl.className = "stage-summary";
+        summaryEl.textContent = summaryText;
+        summaryEl.style.display = summaryText ? "block" : "none";
+
+        row.addEventListener("click", () => {
+          const visible = summaryEl.style.display !== "none";
+          summaryEl.style.display = visible ? "none" : "block";
+        });
+
+        main.appendChild(title);
+        main.appendChild(meta);
+        main.appendChild(summaryEl);
+
+        row.appendChild(iconSpan);
+        row.appendChild(main);
+        container.appendChild(row);
+      });
+    }
+
     function renderState(state) {
       document.getElementById("iteration").textContent =
         state.iteration != null ? state.iteration : "-";
@@ -471,6 +629,8 @@
       } else {
         updateRunHeader(null);
       }
+
+      renderStageTimeline(state);
 
       const logsEl = document.getElementById("logs");
       logsEl.innerHTML = "";
@@ -549,6 +709,21 @@
           ev.preventDefault();
           sendTask();
         }
+      });
+
+      document.querySelectorAll("#run-tabs .tab-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const tab = btn.getAttribute("data-tab");
+          document
+            .querySelectorAll("#run-tabs .tab-btn")
+            .forEach((b) => b.classList.toggle("active", b === btn));
+          ["progress", "logs", "changes", "evidence"].forEach((name) => {
+            const el = document.getElementById("tab-" + name);
+            if (el) {
+              el.style.display = name === tab ? "block" : "none";
+            }
+          });
+        });
       });
 
       document.getElementById("run-cancel-btn").addEventListener("click", () => {
