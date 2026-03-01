@@ -27,6 +27,67 @@
       background: #1f2937;
       font-size: 13px;
     }
+    .runs-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+    }
+    .run-item {
+      padding: 4px 6px;
+      border-radius: 4px;
+      background: #020617;
+      border: 1px solid #1f2937;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .run-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .run-id {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+      color: #e5e7eb;
+    }
+    .run-badge {
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 11px;
+      text-transform: capitalize;
+    }
+    .run-badge.status-running {
+      background: rgba(59, 130, 246, 0.15);
+      color: #60a5fa;
+    }
+    .run-badge.status-succeeded {
+      background: rgba(34, 197, 94, 0.15);
+      color: #4ade80;
+    }
+    .run-badge.status-failed {
+      background: rgba(239, 68, 68, 0.15);
+      color: #fca5a5;
+    }
+    .run-badge.status-queued {
+      background: rgba(234, 179, 8, 0.15);
+      color: #fde68a;
+    }
+    .run-meta-row {
+      display: flex;
+      gap: 8px;
+      color: #9ca3af;
+    }
+    .run-meta-label {
+      color: #6b7280;
+    }
+    .run-item.selected {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.6);
+      background: #02081b;
+    }
     .label {
       color: #9ca3af;
       margin-right: 4px;
@@ -144,7 +205,7 @@
     <div class="meta-item" style="flex: 1 1 260px;">
       <span class="label">Runs</span>
       <span class="value">Recent</span>
-      <div id="runs-list" style="margin-top: 6px; max-height: 140px; overflow-y: auto;"></div>
+      <div id="runs-list" class="runs-list" style="margin-top: 6px; max-height: 140px; overflow-y: auto;"></div>
     </div>
     <div class="meta-item" style="flex: 2 1 360px;">
       <span class="label">Run Detail</span>
@@ -174,6 +235,69 @@
   </div>
 
   <script>
+    let runs = [];
+    let selectedRunId = null;
+
+    function formatElapsed(ms) {
+      if (ms == null) return "-";
+      const sec = Math.floor(ms / 1000);
+      if (sec < 60) return sec + "s";
+      const min = Math.floor(sec / 60);
+      const rem = sec % 60;
+      return min + "m " + rem + "s";
+    }
+
+    function renderRunsList() {
+      const container = document.getElementById("runs-list");
+      if (!container) return;
+      container.innerHTML = "";
+      runs.forEach((run) => {
+        const item = document.createElement("div");
+        item.className = "run-item" + (run.id === selectedRunId ? " selected" : "");
+        item.onclick = () => {
+          selectedRunId = run.id;
+          document.getElementById("run-detail-title").textContent = run.id;
+          renderRunsList();
+        };
+
+        const header = document.createElement("div");
+        header.className = "run-item-header";
+
+        const idSpan = document.createElement("span");
+        idSpan.className = "run-id";
+        idSpan.textContent = run.id;
+
+        const badge = document.createElement("span");
+        const status = (run.status || "unknown").toLowerCase();
+        badge.className = "run-badge status-" + status;
+        badge.textContent = run.status || "unknown";
+
+        header.appendChild(idSpan);
+        header.appendChild(badge);
+
+        const metaRow = document.createElement("div");
+        metaRow.className = "run-meta-row";
+
+        const stageSpan = document.createElement("span");
+        stageSpan.innerHTML =
+          '<span class="run-meta-label">Stage:</span> ' +
+          (run.current_stage || "-");
+
+        const elapsedSpan = document.createElement("span");
+        elapsedSpan.innerHTML =
+          '<span class="run-meta-label">Elapsed:</span> ' +
+          formatElapsed(run.elapsed_ms);
+
+        metaRow.appendChild(stageSpan);
+        metaRow.appendChild(elapsedSpan);
+
+        item.appendChild(header);
+        item.appendChild(metaRow);
+
+        container.appendChild(item);
+      });
+    }
+
     async function fetchState() {
       try {
         const resp = await fetch("/state?_=" + Date.now());
@@ -194,6 +318,28 @@
         state.current_stage || "-";
       document.getElementById("task").textContent =
         state.task ? ("Task: " + state.task) : "";
+
+      // Update runs array with a simple single-run model from state.json for now.
+      // In the future this can be replaced with a dedicated /api/runs endpoint.
+      if (state.run_id) {
+        const existingIndex = runs.findIndex((r) => r.id === state.run_id);
+        const entry = {
+          id: state.run_id,
+          status: state.status || (state.current_stage ? "running" : "queued"),
+          current_stage: state.current_stage,
+          elapsed_ms: state.elapsed_ms ?? null,
+        };
+        if (existingIndex >= 0) {
+          runs[existingIndex] = entry;
+        } else {
+          runs.unshift(entry);
+        }
+        if (!selectedRunId) {
+          selectedRunId = state.run_id;
+          document.getElementById("run-detail-title").textContent = state.run_id;
+        }
+        renderRunsList();
+      }
 
       const logsEl = document.getElementById("logs");
       logsEl.innerHTML = "";
