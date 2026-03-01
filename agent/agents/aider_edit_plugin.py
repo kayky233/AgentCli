@@ -5,7 +5,7 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from agent.framework.agent_types import AgentResult, Stage
 from agent.utils import truncate
@@ -49,7 +49,7 @@ class AiderEditPlugin:
         repo_root: Path = getattr(ctx, "repo_root", Path("."))
         workdir = self._resolve_workdir(ctx, repo_root)
 
-        cmd = self._build_aider_command(ctx, task_text, files)
+        cmd = self._build_aider_command(ctx, task_text, files, workdir)
         ctx.events.emit(
             "aider_edit.start",
             {"cmd": shlex.join(cmd), "cwd": str(workdir), "files": files},
@@ -152,7 +152,7 @@ class AiderEditPlugin:
         # Always use repo_root as working directory to avoid being stuck in subdirs
         return Path(repo_root)
 
-    def _build_aider_command(self, ctx, task_text: str, files: List[str]) -> List[str]:
+    def _build_aider_command(self, ctx, task_text: str, files: List[str], workdir: Path) -> List[str]:
         cmd: List[str] = shlex.split(self.aider_cmd)
 
         # Ensure --no-git is present
@@ -199,11 +199,27 @@ class AiderEditPlugin:
                 cmd.append(part)
 
         # Auto-include requirements.json if present in current working directory
-        req_path = Path("requirements.json")
+        req_path = workdir / "requirements.json"
         if req_path.is_file():
-            req_str = str(req_path)
+            req_str = str(req_path.relative_to(workdir))
             if req_str not in files:
                 files.append(req_str)
+
+        # Auto-include all .py files under workdir (avoid from-scratch rewrites)
+        try:
+            py_files: Set[str] = set()
+            for p in workdir.rglob("*.py"):
+                try:
+                    rel = p.relative_to(workdir)
+                except ValueError:
+                    continue
+                py_files.add(str(rel))
+            for pf in sorted(py_files):
+                if pf not in files:
+                    files.append(pf)
+        except Exception:
+            # Best-effort; don't fail the whole run on filesystem issues
+            pass
 
         # Strengthen the message to instruct aider to create missing files and use gpt-5.1
         # Also append last build/test failure summaries for TDD self-healing.
@@ -213,7 +229,7 @@ class AiderEditPlugin:
         last_build = getattr(ctx, "last_build_result", None)
         last_test = getattr(ctx, "last_test_result", None)
 
-        def _format_failure(name: str, result: Any) -> str:
+        def _format_build_failure(name: str, result: Any) -> str:
             try:
                 success = result.get("success", True) if isinstance(result, dict) else getattr(result, "success", True)
             except Exception:
@@ -236,13 +252,36 @@ class AiderEditPlugin:
                 f"stderr 摘要（截断）：\n{stderr_snip}"
             )
 
+        def _format_test_failure(name: str, result: Any) -> str:
+            try:
+                success = result.get("success", True) if isinstance(result, dict) else getattr(result, "success", True)
+            except Exception:
+                success = True
+            if success:
+                return ""
+            try:
+                log = result.get("log", "") if isinstance(result, dict) else getattr(result, "log", "")
+            except Exception:
+                log = ""
+            try:
+                summary = result.get("summary", "") if isinstance(result, dict) else getattr(result, "summary", "")
+            except Exception:
+                summary = ""
+            log_snip = truncate(str(log), self.max_log_chars // 2)
+            summary_snip = truncate(str(summary), self.max_log_chars // 2)
+            return (
+                f"\n\n{name} 结果：success = False\n"
+                f"log 摘要（截断）：\n{log_snip}\n\n"
+                f"summary 摘要（截断）：\n{summary_snip}"
+            )
+
         failure_sections: List[str] = []
         if last_build is not None:
-            s = _format_failure("上次构建", last_build)
+            s = _format_build_failure("上次构建", last_build)
             if s:
                 failure_sections.append(s)
         if last_test is not None:
-            s = _format_failure("上次测试", last_test)
+            s = _format_test_failure("上次测试", last_test)
             if s:
                 failure_sections.append(s)
 
