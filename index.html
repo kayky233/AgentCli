@@ -102,15 +102,63 @@
       color: #d1d5db;
     }
     #logs {
-      background: #0b1120;
+      background: #020617;
       border-radius: 6px;
-      padding: 8px;
-      max-height: 250px;
-      overflow-y: auto;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      font-size: 12px;
+      padding: 0;
+      max-height: 260px;
+      display: flex;
+      flex-direction: column;
       border: 1px solid #1f2937;
       margin-bottom: 16px;
+    }
+    .log-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 8px;
+      border-bottom: 1px solid #1f2937;
+      background: #020617;
+      font-size: 11px;
+    }
+    .log-toolbar label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: #9ca3af;
+    }
+    .log-toolbar input[type="checkbox"] {
+      margin: 0;
+    }
+    .log-toolbar select,
+    .log-toolbar input[type="text"] {
+      background: #020617;
+      border: 1px solid #4b5563;
+      border-radius: 4px;
+      color: #e5e7eb;
+      font-size: 11px;
+      padding: 2px 6px;
+    }
+    .log-toolbar button {
+      padding: 3px 8px;
+      border-radius: 4px;
+      border: 1px solid #4b5563;
+      background: #020617;
+      color: #e5e7eb;
+      font-size: 11px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .log-toolbar button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .logs-body {
+      flex: 1;
+      background: #020617;
+      overflow-y: auto;
+      padding: 4px 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
     }
     .log-line {
       padding: 2px 0;
@@ -349,7 +397,32 @@
         <div id="stage-timeline" class="stage-timeline"></div>
       </div>
       <div id="tab-logs" class="tab-content" style="display:none;">
-        <div id="logs"></div>
+        <div id="logs">
+          <div class="log-toolbar">
+            <label>
+              <input type="checkbox" id="log-auto-scroll" checked />
+              Auto-scroll
+            </label>
+            <label>
+              <input type="checkbox" id="log-pause" />
+              Pause
+            </label>
+            <label>
+              Level:
+              <select id="log-level">
+                <option value="ALL">All</option>
+                <option value="INFO">Info</option>
+                <option value="ERROR">Error</option>
+              </select>
+            </label>
+            <label>
+              Search:
+              <input type="text" id="log-search" placeholder="filter logs..." />
+            </label>
+            <button id="log-copy">Copy all</button>
+          </div>
+          <div id="logs-body" class="logs-body"></div>
+        </div>
       </div>
       <div id="tab-changes" class="tab-content" style="display:none;">
         <div style="color:#9ca3af;">Changes view coming soon.</div>
@@ -632,16 +705,38 @@
 
       renderStageTimeline(state);
 
-      const logsEl = document.getElementById("logs");
-      logsEl.innerHTML = "";
-      const events = state.events_tail || [];
-      events.forEach(ev => {
+      window.__latestEvents = state.events_tail || [];
+      renderLogs();
+    }
+
+    function renderLogs() {
+      const events = window.__latestEvents || [];
+      const bodyEl = document.getElementById("logs-body");
+      if (!bodyEl) return;
+
+      const pause = document.getElementById("log-pause").checked;
+      const autoScroll = document.getElementById("log-auto-scroll").checked;
+      const levelFilter = document.getElementById("log-level").value;
+      const searchTerm = document.getElementById("log-search").value.trim().toLowerCase();
+
+      bodyEl.innerHTML = "";
+
+      events.forEach((ev) => {
+        const level = (ev.level || "").toUpperCase();
+        if (levelFilter === "INFO" && level === "ERROR") return;
+        if (levelFilter === "ERROR" && level !== "ERROR") return;
+
+        const payloadText = ev.payload ? JSON.stringify(ev.payload) : "";
+        const fullText = (ev.timestamp || "") + " " + (ev.type || "") + " " + payloadText;
+        if (searchTerm && !fullText.toLowerCase().includes(searchTerm)) {
+          return;
+        }
+
         const line = document.createElement("div");
         line.className = "log-line";
 
-        const level = (ev.level || "").toLowerCase();
-        if (level === "error") line.classList.add("error");
-        if (level === "warn" || level === "warning") line.classList.add("warn");
+        if (level === "ERROR") line.classList.add("error");
+        if (level === "WARN" || level === "WARNING") line.classList.add("warn");
 
         const ts = document.createElement("span");
         ts.className = "timestamp";
@@ -652,15 +747,17 @@
         type.textContent = ev.type || "";
 
         const payload = document.createElement("span");
-        payload.textContent = ev.payload ? JSON.stringify(ev.payload) : "";
+        payload.textContent = payloadText;
 
         line.appendChild(ts);
         line.appendChild(type);
         line.appendChild(payload);
-        logsEl.appendChild(line);
+        bodyEl.appendChild(line);
       });
 
-      logsEl.scrollTop = logsEl.scrollHeight;
+      if (!pause && autoScroll) {
+        bodyEl.scrollTop = bodyEl.scrollHeight;
+      }
     }
 
     async function sendTask() {
@@ -725,6 +822,37 @@
           });
         });
       });
+
+      const logControls = ["log-auto-scroll", "log-pause", "log-level", "log-search"];
+      logControls.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) {
+          const evt = id === "log-search" ? "input" : (el.tagName === "SELECT" ? "change" : "change");
+          el.addEventListener(evt, () => renderLogs());
+        }
+      });
+
+      const copyBtn = document.getElementById("log-copy");
+      if (copyBtn) {
+        copyBtn.addEventListener("click", async () => {
+          const events = window.__latestEvents || [];
+          const text = events
+            .map((ev) => {
+              const payload = ev.payload ? JSON.stringify(ev.payload) : "";
+              return `${ev.timestamp || ""} ${ev.type || ""} ${payload}`;
+            })
+            .join("\n");
+          try {
+            await navigator.clipboard.writeText(text);
+            copyBtn.textContent = "Copied";
+            setTimeout(() => {
+              copyBtn.textContent = "Copy all";
+            }, 1500);
+          } catch {
+            alert("Failed to copy logs.");
+          }
+        });
+      }
 
       document.getElementById("run-cancel-btn").addEventListener("click", () => {
         // Placeholder: wire to backend cancel API when available.
