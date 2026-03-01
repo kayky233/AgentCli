@@ -145,6 +145,10 @@ class AiderEditPlugin:
         if "--no-git" not in cmd:
             cmd.append("--no-git")
 
+        # Ensure --yes is present to avoid interactive prompts
+        if "--yes" not in cmd:
+            cmd.append("--yes")
+
         # Ensure model is explicitly set to gpt-5.1 (override any existing --model)
         # Remove any existing --model and its value
         cleaned_cmd: List[str] = []
@@ -199,7 +203,9 @@ class AiderEditPlugin:
 
     def _run_subprocess(self, cmd: List[str], cwd: Path) -> Dict[str, Any]:
         try:
-            print(f"[DEBUG] Running aider subprocess: {shlex.join(cmd)} (cwd={cwd})")
+            # Print full, untruncated command for debugging
+            full_cmd_str = shlex.join(cmd)
+            print(f"[DEBUG] Running aider subprocess: {full_cmd_str} (cwd={cwd})")
             proc = subprocess.run(
                 cmd,
                 cwd=str(cwd),
