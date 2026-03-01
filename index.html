@@ -671,27 +671,35 @@
       if (!container) return;
       container.innerHTML = "";
 
-      const current = (state.current_stage || "").toUpperCase();
+      // Build a map from stage name -> status from state.stages (if present)
+      const stagesArr = state.stages || [];
+      const stagesMap = {};
+      stagesArr.forEach((st) => {
+        if (st && st.name) {
+          stagesMap[st.name.toUpperCase()] = (st.status || "pending").toLowerCase();
+        }
+      });
+
       STAGES_ORDER.forEach((stageName) => {
         const row = document.createElement("div");
         row.className = "stage-row";
-        if (stageName === current) {
-          row.classList.add("active");
-        }
 
-        const idx = STAGES_ORDER.indexOf(stageName);
-        const currentIdx = STAGES_ORDER.indexOf(current);
+        const statusRaw = stagesMap[stageName] || "pending";
+        const status = statusRaw.toLowerCase();
+
         let icon = " ";
         let statusText = "Pending";
-        if (currentIdx === -1) {
-          statusText = "Pending";
-        } else if (idx < currentIdx) {
-          icon = "✔";
-          statusText = "Done";
-        } else if (idx === currentIdx) {
+        if (status === "running") {
           icon = "▶";
           statusText = "Running";
-        } else {
+          row.classList.add("active");
+        } else if (status === "succeeded") {
+          icon = "✔";
+          statusText = "Done";
+        } else if (status === "failed") {
+          icon = "✖";
+          statusText = "Failed";
+        } else if (status === "queued" || status === "pending") {
           statusText = "Pending";
         }
 
@@ -710,15 +718,10 @@
         meta.className = "stage-meta";
         meta.textContent = statusText;
 
-        let summaryText = "";
-        const summary = state.stage_summaries || {};
-        if (summary && summary[stageName]) {
-          summaryText = String(summary[stageName]);
-        }
         const summaryEl = document.createElement("div");
         summaryEl.className = "stage-summary";
-        summaryEl.textContent = summaryText;
-        summaryEl.style.display = summaryText ? "block" : "none";
+        summaryEl.textContent = "";
+        summaryEl.style.display = "none";
 
         row.addEventListener("click", () => {
           const visible = summaryEl.style.display !== "none";
