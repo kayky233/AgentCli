@@ -56,6 +56,8 @@ class AiderEditPlugin:
         )
 
         result = self._run_subprocess(cmd, cwd=workdir)
+        if result.get("stdout"):
+            print(result["stdout"])
         returncode = result.get("returncode", 1)
         status = "ok" if returncode == 0 else "error"
 
@@ -140,15 +142,29 @@ class AiderEditPlugin:
 
     def _build_aider_command(self, task_text: str, files: List[str]) -> List[str]:
         cmd: List[str] = shlex.split(self.aider_cmd)
+        # Ensure --no-git is present
+        if "--no-git" not in cmd:
+            cmd.append("--no-git")
         extra = os.environ.get("AIDER_EXTRA_ARGS", "").strip()
         if extra:
-            cmd.extend(shlex.split(extra))
-        cmd.extend(["--message", task_text])
+            extra_parts = shlex.split(extra)
+            # Avoid duplicating --no-git if user already put it into AIDER_EXTRA_ARGS
+            for part in extra_parts:
+                if part == "--no-git" and "--no-git" in cmd:
+                    continue
+                cmd.append(part)
+        # Strengthen the message to instruct aider to create missing files
+        enhanced_task = (
+            f"{task_text}\n\n"
+            "重要：如果需要的文件不存在，请直接创建它们，不要只尝试编辑已有文件。"
+        )
+        cmd.extend(["--message", enhanced_task])
         cmd.extend(files)
         return cmd
 
     def _run_subprocess(self, cmd: List[str], cwd: Path) -> Dict[str, Any]:
         try:
+            print(f"[DEBUG] Running aider subprocess: {shlex.join(cmd)} (cwd={cwd})")
             proc = subprocess.run(
                 cmd,
                 cwd=str(cwd),

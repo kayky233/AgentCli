@@ -83,6 +83,7 @@ class RequirementsAgentPlugin:
         )
 
         resp = llm.generate_patch(messages)
+        print(f"[DEBUG] LLM Response: {resp.get('content')}")
         if not resp.get("ok"):
             err = resp.get("error") or "LLM 调用失败"
             print(f"[DEBUG] Error: {err}")
